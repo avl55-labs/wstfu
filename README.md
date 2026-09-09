@@ -13,6 +13,8 @@ Your machine reboots when <i>you</i> say so.</p>
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
+<p align="center"><b>English</b> · <a href="README.ru.md">Русский</a></p>
+
 ---
 
 ## The problem
@@ -75,12 +77,10 @@ three things and ask for elevation themselves.
 | `wstfu.ps1 shutup [-Level 1\|2\|3] [-Yes]` | Applies a level and installs the watchdog. |
 | `wstfu.ps1 window 4h` | Opens a maintenance window: pause and deferrals lifted so you can install on purpose. Reboot control stays on. Closes itself when the time is up. |
 | `wstfu.ps1 close` | Closes that window right now. |
-| `wstfu.ps1 dashboard` | Open the control panel: a native window with live status, one-click level switching, the window, trust and revert, and an EN/RU switch. Needs elevation (it self-elevates). |
-| `wstfu.ps1 trust` / `untrust` | Add / remove a Defender exclusion for the WSTFU folder. |
-| `wstfu.ps1 speak` | Full revert to Microsoft defaults, watchdog removed. Also removes the Defender exclusion. |
-| `wstfu.ps1 trust` | Add the WSTFU folder to Microsoft Defender's exclusions (stops file-based flags). Removed by `speak`. |
 | `wstfu.ps1 report` | Show the weekly health summary as a toast right now. |
-| `wstfu.ps1 dashboard` | Open the control panel window (native, no dependencies). |
+| `wstfu.ps1 trust` / `untrust` | Add / remove a Defender exclusion for the WSTFU folder (stops file-based flags). Removed by `speak` too. |
+| `wstfu.ps1 dashboard` | Open the control panel: a native window (no dependencies) with live status, one-click level switching, the window, trust and revert, and an EN/RU switch. Self-elevates. |
+| `wstfu.ps1 speak` | Full revert to Microsoft defaults, watchdog removed, Defender exclusion removed. |
 | `wstfu.ps1 enforce` | One silent pass. This is what the watchdog runs. |
 
 Durations are `30m`, `4h`, `2d`, or a bare number meaning hours.
@@ -197,6 +197,8 @@ C:\ProgramData\WSTFU\config.json   chosen level, maintenance window
 C:\ProgramData\WSTFU\state.json    last pass, correction counters
 C:\ProgramData\WSTFU\wstfu.log     rolling log, trimmed at ~1 MB
 Scheduled Task \WSTFU              SYSTEM, at boot + every 10 minutes
+Scheduled Task \WSTFU Report       your session, weekly - the toast summary
+%LOCALAPPDATA%\WSTFU\last-report.txt   text of the last weekly summary
 ```
 
 The folder is ACL'd on install: full control for SYSTEM and Administrators,
@@ -220,8 +222,7 @@ on a throwaway VM.
 
 Version 1 is about reboots, and only reboots. Candidates for later:
 
-- `-Status -Json` for monitoring, and a tray icon that says "updates are waiting"
-  once a week so you actually install them.
+- `status -Json` for monitoring.
 - Signed releases through GitHub Releases.
 - A real Windows service instead of a scheduled task.
 - An opt-in "install and reboot at 03:00 next Sunday" mode for people who want a
