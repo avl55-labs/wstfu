@@ -1,0 +1,9 @@
+*.log
+*.tmp
+*.zip
+.vscode/
+.idea/
+TestResults.xml
+
+# Files the Claude desktop app drops here when delivering downloads
+Claude outputs/
