@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     WSTFU - Windows, Shut The F**k Up.
     Takes reboot control away from Windows Update and keeps it that way.
@@ -33,7 +33,7 @@
     Justification = 'Passed through as -NoPrompt:$Yes; the analyzer does not follow switch splatting.')]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('status', 'shutup', 'window', 'close', 'speak', 'enforce', 'help')]
+    [ValidateSet('status', 'shutup', 'window', 'close', 'speak', 'trust', 'untrust', 'enforce', 'dashboard', 'help')]
     [string]$Command = 'status',
 
     # 0 means "not supplied" - shutup then asks, or defaults to 3 with -Yes.
@@ -581,11 +581,12 @@ function Get-Config {
         version     = $script:Version
         installedAt = $null
         windowUntil = $null
+        lang        = 'en'
     }
     if (-not (Test-Path $script:ConfigPath)) { return $default }
     try {
         $raw = Get-Content $script:ConfigPath -Raw -ErrorAction Stop | ConvertFrom-Json
-        foreach ($k in 'level', 'version', 'installedAt', 'windowUntil') {
+        foreach ($k in 'level', 'version', 'installedAt', 'windowUntil', 'lang') {
             if ($raw.PSObject.Properties.Name -contains $k) { $default.$k = $raw.$k }
         }
         if ($default.level -lt 1 -or $default.level -gt 3) { $default.level = 3 }
@@ -717,6 +718,63 @@ function Get-UpdateServiceState {
         }
     }
     return $rows
+}
+
+function Test-DefenderPresent {
+    <# Windows Defender may be absent or replaced by a third-party AV. #>
+    return [bool](Get-Command Get-MpPreference -ErrorAction SilentlyContinue)
+}
+
+function Test-DefenderTrust {
+    <# Is our folder on Defender's exclusion list right now? #>
+    if (-not (Test-DefenderPresent)) { return $false }
+    try {
+        $paths = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
+        return ($paths -contains $script:HomeDir)
+    } catch {
+        return $false
+    }
+}
+
+function Enable-DefenderTrust {
+    <#
+    .SYNOPSIS
+        Add C:\ProgramData\WSTFU to Defender's path exclusions.
+    .NOTES
+        This stops Defender flagging the installed script and its folder as a
+        file-based threat. It does NOT, and cannot, change Defender's behaviour
+        monitoring - if a future definition decides that changing update policy
+        is 'unwanted', a path exclusion will not silence that. For a local,
+        self-authored tool the file-based case is the real one. Reversed by
+        'speak' and by 'untrust'.
+    #>
+    if (-not (Test-DefenderPresent)) {
+        Write-GuardLog 'Defender cmdlets not present (third-party AV?). Nothing to trust.' 'WARN'
+        return 'absent'
+    }
+    if (Test-DefenderTrust) { return 'ok' }
+    try {
+        Add-MpPreference -ExclusionPath $script:HomeDir -ErrorAction Stop
+        Write-GuardLog "Added Defender exclusion for $($script:HomeDir)."
+        return 'added'
+    } catch {
+        # Tamper Protection blocks exclusion changes from script; say so plainly.
+        Write-GuardLog "Could not add Defender exclusion: $($_.Exception.Message)" 'WARN'
+        return 'denied'
+    }
+}
+
+function Disable-DefenderTrust {
+    if (-not (Test-DefenderPresent)) { return 'absent' }
+    if (-not (Test-DefenderTrust)) { return 'ok' }
+    try {
+        Remove-MpPreference -ExclusionPath $script:HomeDir -ErrorAction Stop
+        Write-GuardLog "Removed Defender exclusion for $($script:HomeDir)."
+        return 'removed'
+    } catch {
+        Write-GuardLog "Could not remove Defender exclusion: $($_.Exception.Message)" 'WARN'
+        return 'denied'
+    }
 }
 
 function Test-PendingReboot {
@@ -911,6 +969,11 @@ function Show-Status {
         Write-Out "  Last pass : $($state.lastEnforce)   corrections so far: $($state.totalCorrections)"
     }
     Write-Out ("  Pending   : {0}" -f $(if (Test-PendingReboot) { 'a restart is pending - install and reboot on your terms' } else { 'nothing pending' }))
+    if (Test-DefenderPresent) {
+        $trusted = Test-DefenderTrust
+        Write-Out ("  AV trust  : {0}" -f $(if ($trusted) { 'Defender exclusion set for the WSTFU folder' } else { 'no exclusion (run: wstfu.ps1 trust)' })) `
+            $(if ($trusted) { 'Gray' } else { 'DarkGray' })
+    }
     Write-Out ''
 
     # --- settings table
@@ -1001,6 +1064,45 @@ function Show-Status {
     Write-Out ''
 }
 
+function Install-Wstfu {
+    <#
+    .SYNOPSIS
+        The non-interactive core of installation: copy self, harden ACL, save the
+        chosen level, enforce once, register the watchdog. No Write-Host, no
+        Read-Host, no exit - so both the CLI and the dashboard can call it. The
+        caller is responsible for having checked admin rights.
+    #>
+    param([Parameter(Mandatory)][ValidateRange(1, 3)][int]$Level)
+
+    if (-not (Test-Path $script:HomeDir)) {
+        New-Item -ItemType Directory -Path $script:HomeDir -Force | Out-Null
+    }
+    $me = $PSCommandPath
+    if ($me -and ((Resolve-Path $me).Path -ne $script:InstalledPs)) {
+        Copy-Item -Path $me -Destination $script:InstalledPs -Force
+    }
+    # SYSTEM and administrators own it; users may read but not rewrite the script
+    # the watchdog executes.
+    $acl = Invoke-Native -File 'icacls.exe' -Arguments @(
+        $script:HomeDir, '/inheritance:r', '/grant:r',
+        'SYSTEM:(OI)(CI)F', 'Administrators:(OI)(CI)F', 'Users:(OI)(CI)RX')
+    if ($acl.ExitCode -ne 0) { Write-GuardLog "icacls hardening failed: $($acl.Output)" 'WARN' }
+
+    $config = Get-Config
+    $config.level       = $Level
+    $config.version     = $script:Version
+    $config.installedAt = (Get-Date).ToString('s')
+    $config.windowUntil = $null
+    Save-Config $config
+
+    $enforce = Invoke-Enforce
+    $ok = Install-Watchdog
+    $null = Invoke-Native -File 'gpupdate.exe' -Arguments @('/force')
+    Write-GuardLog "Installed at level $Level."
+
+    return [pscustomobject]@{ Enforce = $enforce; WatchdogOk = $ok }
+}
+
 function Invoke-Shutup {
     param([int]$ChosenLevel, [switch]$NoPrompt)
 
@@ -1031,30 +1133,9 @@ function Invoke-Shutup {
     Write-Out ''
     Write-Out "  Applying level $ChosenLevel ($($script:LevelNames[$ChosenLevel]))..." 'White'
 
-    if (-not (Test-Path $script:HomeDir)) {
-        New-Item -ItemType Directory -Path $script:HomeDir -Force | Out-Null
-    }
-    $me = $PSCommandPath
-    if ($me -and ((Resolve-Path $me).Path -ne $script:InstalledPs)) {
-        Copy-Item -Path $me -Destination $script:InstalledPs -Force
-    }
-    # SYSTEM and administrators own it; users may read but not rewrite the script
-    # the watchdog executes.
-    $acl = Invoke-Native -File 'icacls.exe' -Arguments @(
-        $script:HomeDir, '/inheritance:r', '/grant:r',
-        'SYSTEM:(OI)(CI)F', 'Administrators:(OI)(CI)F', 'Users:(OI)(CI)RX')
-    if ($acl.ExitCode -ne 0) { Write-GuardLog "icacls hardening failed: $($acl.Output)" 'WARN' }
-
-    $config = Get-Config
-    $config.level       = $ChosenLevel
-    $config.version     = $script:Version
-    $config.installedAt = (Get-Date).ToString('s')
-    $config.windowUntil = $null
-    Save-Config $config
-
-    $result = Invoke-Enforce
-    $ok = Install-Watchdog
-    $null = Invoke-Native -File 'gpupdate.exe' -Arguments @('/force')
+    $install = Install-Wstfu -Level $ChosenLevel
+    $result = $install.Enforce
+    $ok = $install.WatchdogOk
 
     Write-Out ''
     Write-Out "  Applied   : $($result.Fixed.Count) setting(s) written, $($result.Failed.Count) refused" 'Green'
@@ -1069,7 +1150,6 @@ function Invoke-Shutup {
     Write-Out '  Update on your terms:  .\wstfu.ps1 window 4h' 'White'
     Write-Out '  Undo everything :  .\wstfu.ps1 speak' 'DarkGray'
     Write-Out ''
-    Write-GuardLog "Installed at level $ChosenLevel."
 }
 
 function Invoke-Window {
@@ -1127,6 +1207,8 @@ function Invoke-Speak {
         $null = Set-SchedTaskEnabled -TaskPath $t -Action 'enable'
     }
 
+    $null = Disable-DefenderTrust
+
     $config = Get-Config
     $config.windowUntil = $null
     Save-Config $config
@@ -1143,6 +1225,39 @@ function Invoke-Speak {
     Write-GuardLog "Revert complete, $removed value(s) removed."
 }
 
+function Invoke-Trust {
+    Show-Banner
+    if (-not (Test-Admin)) { Write-Out '  Needs an elevated PowerShell.' 'Red'; exit 1 }
+    if (-not (Test-Path $script:HomeDir)) {
+        Write-Out '  Nothing installed yet - run shutup first, then trust.' 'Yellow'; return
+    }
+    switch (Enable-DefenderTrust) {
+        'added'  { Write-Out "  Added a Defender exclusion for $($script:HomeDir)." 'Green' }
+        'ok'     { Write-Out '  Already trusted - nothing to do.' 'Green' }
+        'absent' { Write-Out '  Windows Defender is not the active AV here; add the folder to your' 'Yellow'
+                   Write-Out "  own antivirus exclusions by hand: $($script:HomeDir)" 'Yellow' }
+        'denied' { Write-Out '  Defender refused the change - most likely Tamper Protection is on.' 'Red'
+                   Write-Out '  Turn it off for a moment (Settings > Virus & threat protection >' 'DarkGray'
+                   Write-Out '  Manage settings), run this again, then turn it back on.' 'DarkGray' }
+    }
+    Write-Out ''
+    Write-Out '  Note: this hides the WSTFU files from Defender scans. It does not change' 'DarkGray'
+    Write-Out '  behaviour monitoring, and it is undone by speak.' 'DarkGray'
+    Write-Out ''
+}
+
+function Invoke-Untrust {
+    Show-Banner
+    if (-not (Test-Admin)) { Write-Out '  Needs an elevated PowerShell.' 'Red'; exit 1 }
+    switch (Disable-DefenderTrust) {
+        'removed' { Write-Out '  Defender exclusion removed.' 'Green' }
+        'ok'      { Write-Out '  No exclusion was set - nothing to do.' 'Green' }
+        'absent'  { Write-Out '  Windows Defender is not the active AV here.' 'Yellow' }
+        'denied'  { Write-Out '  Defender refused the change (Tamper Protection?).' 'Red' }
+    }
+    Write-Out ''
+}
+
 function Show-Help {
     Show-Banner
     Write-Out '  USAGE' 'White'
@@ -1151,7 +1266,10 @@ function Show-Help {
     Write-Out '    .\wstfu.ps1 shutup -Level 3     same, no prompt'
     Write-Out '    .\wstfu.ps1 window 4h           let updates in for a while; reboots stay yours'
     Write-Out '    .\wstfu.ps1 close               close that window now'
+    Write-Out '    .\wstfu.ps1 trust              add the WSTFU folder to Defender exclusions'
+    Write-Out '    .\wstfu.ps1 untrust            remove that exclusion'
     Write-Out '    .\wstfu.ps1 speak               undo everything, Microsoft defaults'
+    Write-Out '    .\wstfu.ps1 dashboard          open the control panel window'
     Write-Out '    .\wstfu.ps1 enforce             one silent pass (what the watchdog runs)'
     Write-Out ''
     Write-Out '  LEVELS' 'White'
@@ -1160,6 +1278,383 @@ function Show-Help {
 }
 
 #endregion
+
+function Reset-Wstfu {
+    <# Non-interactive core of 'speak': undo everything, return count removed. #>
+    $null = Uninstall-Watchdog
+    $removed = 0
+    foreach ($s in (Get-WstfuPlan -Level 3)) {
+        if (Remove-SettingValue $s) { $removed++ }
+    }
+    foreach ($t in $script:RebootTasks) {
+        $null = Set-SchedTaskEnabled -TaskPath $t -Action 'enable'
+    }
+    $null = Disable-DefenderTrust
+    $config = Get-Config
+    $config.windowUntil = $null
+    Save-Config $config
+    $null = Invoke-Native -File 'gpupdate.exe' -Arguments @('/force')
+    Write-GuardLog "Revert complete, $removed value(s) removed."
+    return $removed
+}
+
+function Get-DashboardModel {
+    <# Everything the dashboard shows, gathered in one read. Pure-ish: no UI. #>
+    $config    = Get-Config
+    $inWindow  = Test-WindowOpen $config
+    $installed = Test-Path $script:InstalledPs
+    $effective = if ($inWindow) { 1 } else { [int]$config.level }
+    $plan      = Get-WstfuPlan -Level $effective
+    $drift     = @($plan | Where-Object { -not (Test-SettingSatisfied -Setting $_ -Current (Get-CurrentValue $_)) }).Count
+    $history   = Get-RebootHistory
+    $lastBad   = $history | Where-Object { $_.Uninvited } | Select-Object -First 1
+    $days      = if ($lastBad) { [int]((Get-Date) - $lastBad.Time).TotalDays } else { $null }
+    $edition   = Get-WindowsEdition
+
+    [pscustomobject]@{
+        Edition     = $edition
+        Installed   = $installed
+        Level       = [int]$config.level
+        LevelName   = $script:LevelNames[[int]$config.level]
+        InWindow    = $inWindow
+        WindowUntil = $config.windowUntil
+        Watchdog    = (Test-WatchdogPresent)
+        Drift       = $drift
+        Trusted     = (Test-DefenderTrust)
+        DefenderOk  = (Test-DefenderPresent)
+        Pending     = (Test-PendingReboot)
+        Days        = $days
+        HasHistory  = ($history.Count -gt 0)
+    }
+}
+
+function Get-DashString {
+    <#
+    .SYNOPSIS
+        UI strings for the dashboard, keyed by language. Product terms (WSTFU,
+        the level names mute/quiet/stfu) stay untranslated on purpose - they are
+        identifiers, not words. Add a language by adding one hashtable here.
+    #>
+    @{
+        en = @{
+            hero='DAYS SINCE WINDOWS REBOOTED YOUR PC WITHOUT ASKING'; lvl='LEVEL'; watchdog='WATCHDOG'
+            window='WINDOW'; drift='SETTINGS DRIFT'; trust='AV TRUST'; pending='PENDING REBOOT'
+            setLevel='Set level:'; bWindow='Open window 4h'; bClose='Close window'; bCheck='Check for updates'
+            bTrust='Trust in Defender'; bUntrust='Remove trust'; bRefresh='Refresh'; bRevert='Revert everything'
+            vRunning='running'; vNotSet='not set'; vNotInstalled='not installed'; vClosed='closed'; vOpen='OPEN'
+            vNone='none'; vDrift='{0} drifted'; vTrusted='trusted'; vNoDefender='no Defender'
+            vPendingYes='yes - restart yourself'; vClean='clean'; vNA='n/a'
+            ready='Ready.'; refreshed='Refreshed.'; applying='Applying level {0} ...'
+            applied='Level {0} applied - {1} setting(s) written, watchdog {2}.'; wdRunning='running'; wdFailed='FAILED'
+            winOpen='Maintenance window open for 4h - updates allowed, reboots still yours.'
+            winClosed='Window closed - full level back in force.'; updOpened='Opened Windows Update settings.'
+            trustAdded='Added Defender exclusion for the WSTFU folder.'; trustRemoved='Defender exclusion removed.'
+            trustDenied='Defender refused - Tamper Protection is likely on.'
+            trustAbsent='Defender is not the active AV - exclude the folder in your own AV.'; trustAlready='Already trusted.'
+            reverted='Reverted - {0} value(s) removed, Windows is back in charge.'; err='Error: {0}'
+            confirm='Undo everything and hand reboot control back to Windows Update?'; confirmTitle='WSTFU - Revert'
+            noLog='(no log yet)'; logErr='(log unreadable)'
+        }
+        ru = @{
+            hero='ДНЕЙ БЕЗ ПЕРЕЗАГРУЗКИ WINDOWS БЕЗ ТВОЕГО ВЕДОМА'; lvl='УРОВЕНЬ'; watchdog='СТОРОЖ'
+            window='ОКНО'; drift='ОТКЛОНЕНИЯ'; trust='ДОВЕРИЕ AV'; pending='ОЖИДАЕТ ПЕРЕЗАГРУЗКИ'
+            setLevel='Уровень:'; bWindow='Открыть окно 4ч'; bClose='Закрыть окно'; bCheck='Проверить обновления'
+            bTrust='Доверить Defender'; bUntrust='Снять доверие'; bRefresh='Обновить'; bRevert='Откатить всё'
+            vRunning='работает'; vNotSet='не задан'; vNotInstalled='не установлен'; vClosed='закрыто'; vOpen='ОТКРЫТО'
+            vNone='нет'; vDrift='сбито: {0}'; vTrusted='доверено'; vNoDefender='нет Defender'
+            vPendingYes='да - перезагрузись сам'; vClean='чисто'; vNA='н/д'
+            ready='Готово.'; refreshed='Обновлено.'; applying='Применяю уровень {0} ...'
+            applied='Уровень {0} применён - записано настроек: {1}, сторож {2}.'; wdRunning='работает'; wdFailed='ОШИБКА'
+            winOpen='Окно обслуживания открыто на 4ч - обновления разрешены, перезагрузка всё равно только твоя.'
+            winClosed='Окно закрыто - уровень снова в силе.'; updOpened='Открыл настройки Windows Update.'
+            trustAdded='Папка WSTFU добавлена в исключения Defender.'; trustRemoved='Исключение Defender снято.'
+            trustDenied='Defender отказал - скорее всего включена Tamper Protection.'
+            trustAbsent='Defender не активен - добавь папку в исключения своего антивируса.'; trustAlready='Уже доверено.'
+            reverted='Откат выполнен - удалено значений: {0}, Windows снова управляет.'; err='Ошибка: {0}'
+            confirm='Отменить всё и вернуть управление перезагрузкой Windows Update?'; confirmTitle='WSTFU - Откат'
+            noLog='(лога пока нет)'; logErr='(лог не читается)'
+        }
+    }
+}
+
+function Show-Dashboard {
+    if (-not (Test-Admin)) {
+        # The dashboard changes system state, so it needs elevation. Relaunch.
+        try {
+            Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", 'dashboard')
+        } catch {
+            Write-Out '  The dashboard needs administrator rights and elevation was declined.' 'Red'
+        }
+        return
+    }
+
+    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+    [xml]$xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WSTFU" Height="730" Width="560" WindowStartupLocation="CenterScreen"
+        Background="#12161C" FontFamily="Segoe UI" ResizeMode="CanMinimize">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#232C38"/>
+      <Setter Property="Foreground" Value="#E8EEF7"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="10,7"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <Grid Grid.Row="0" Margin="0,0,0,14">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <StackPanel Grid.Column="0" Orientation="Horizontal">
+        <TextBlock Text="WSTFU" FontSize="26" FontWeight="Bold" Foreground="#E8EEF7"/>
+        <TextBlock Text="  Windows, Shut The F**k Up" FontSize="13" Foreground="#8A97A6" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock Name="lnEN" Text="EN" FontSize="13" Foreground="#8A97A6" Cursor="Hand" Margin="0,0,6,0"/>
+        <TextBlock Text="|" FontSize="13" Foreground="#3A4452" Margin="0,0,6,0"/>
+        <TextBlock Name="lnRU" Text="RU" FontSize="13" Foreground="#8A97A6" Cursor="Hand"/>
+      </StackPanel>
+    </Grid>
+
+    <Border Grid.Row="1" Background="#1B222B" CornerRadius="12" Padding="18,16" Margin="0,0,0,12">
+      <StackPanel>
+        <TextBlock Name="txHero" FontSize="11" Foreground="#8A97A6"/>
+        <TextBlock Name="lblDays" Text="--" FontSize="46" FontWeight="Bold" Foreground="#22D3EE" Margin="0,2,0,0"/>
+        <TextBlock Name="lblSystem" Text="" FontSize="12" Foreground="#8A97A6"/>
+      </StackPanel>
+    </Border>
+
+    <Border Grid.Row="2" Background="#1B222B" CornerRadius="12" Padding="18,14" Margin="0,0,0,12">
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,4">
+          <TextBlock Name="txLevel" FontSize="10" Foreground="#8A97A6"/>
+          <TextBlock Name="lblLevel" Text="--" FontSize="15" Foreground="#E8EEF7"/>
+        </StackPanel>
+        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,4">
+          <TextBlock Name="txWatchdog" FontSize="10" Foreground="#8A97A6"/>
+          <TextBlock Name="lblWatchdog" Text="--" FontSize="15" Foreground="#E8EEF7"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,4">
+          <TextBlock Name="txWindow" FontSize="10" Foreground="#8A97A6"/>
+          <TextBlock Name="lblWindow" Text="--" FontSize="15" Foreground="#E8EEF7"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,4">
+          <TextBlock Name="txDrift" FontSize="10" Foreground="#8A97A6"/>
+          <TextBlock Name="lblDrift" Text="--" FontSize="15" Foreground="#E8EEF7"/>
+        </StackPanel>
+        <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,4">
+          <TextBlock Name="txTrust" FontSize="10" Foreground="#8A97A6"/>
+          <TextBlock Name="lblTrust" Text="--" FontSize="15" Foreground="#E8EEF7"/>
+        </StackPanel>
+        <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,4">
+          <TextBlock Name="txPending" FontSize="10" Foreground="#8A97A6"/>
+          <TextBlock Name="lblPending" Text="--" FontSize="15" Foreground="#E8EEF7"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,10">
+      <TextBlock Name="txSetLevel" Foreground="#8A97A6" VerticalAlignment="Center" Margin="0,0,10,0" FontSize="13"/>
+      <Button Name="btnL1" Content="1  mute"/>
+      <Button Name="btnL2" Content="2  quiet"/>
+      <Button Name="btnL3" Content="3  stfu"/>
+    </StackPanel>
+
+    <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,0,0,10">
+      <Button Name="btnWindow"/>
+      <Button Name="btnClose"/>
+      <Button Name="btnCheck"/>
+    </StackPanel>
+
+    <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,12">
+      <Button Name="btnTrust"/>
+      <Button Name="btnRefresh"/>
+      <Button Name="btnRevert" Background="#3A1E22" Foreground="#F87171"/>
+    </StackPanel>
+
+    <Border Grid.Row="6" Background="#0D1117" CornerRadius="8" Padding="10">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <TextBlock Name="lblLog" Text="" FontFamily="Consolas" FontSize="11" Foreground="#8A97A6" TextWrapping="NoWrap"/>
+      </ScrollViewer>
+    </Border>
+
+    <TextBlock Grid.Row="7" Name="lblStatus" Text="" FontSize="12" Foreground="#34D399" Margin="2,8,0,0"/>
+  </Grid>
+</Window>
+'@
+
+    $reader = New-Object System.Xml.XmlNodeReader $xaml
+    $win = [Windows.Markup.XamlReader]::Load($reader)
+
+    $ctl = @{}
+    foreach ($n in 'lnEN','lnRU','txHero','txLevel','txWatchdog','txWindow','txDrift','txTrust','txPending',
+                   'txSetLevel','lblDays','lblSystem','lblLevel','lblWatchdog','lblWindow','lblDrift','lblTrust',
+                   'lblPending','lblLog','lblStatus','btnL1','btnL2','btnL3','btnWindow','btnClose','btnCheck',
+                   'btnTrust','btnRefresh','btnRevert') {
+        $ctl[$n] = $win.FindName($n)
+    }
+
+    $strings = Get-DashString
+    $script:DashLang = (Get-Config).lang
+    if ($script:DashLang -ne 'ru' -and $script:DashLang -ne 'en') { $script:DashLang = 'en' }
+
+    $green='#34D399'; $amber='#FBBF24'; $red='#F87171'; $cyan='#22D3EE'; $text='#E8EEF7'; $muted='#8A97A6'
+    $brush = { param($hex) New-Object Windows.Media.SolidColorBrush ([Windows.Media.ColorConverter]::ConvertFromString($hex)) }
+    $setFg = { param($tb, $hex) $tb.Foreground = (& $brush $hex) }
+
+    $refresh = {
+        $S = $strings[$script:DashLang]
+        $m = Get-DashboardModel
+        if ($null -ne $m.Days) { $ctl.lblDays.Text = [string]$m.Days; & $setFg $ctl.lblDays $cyan }
+        elseif ($m.HasHistory) { $ctl.lblDays.Text = $S.vClean; & $setFg $ctl.lblDays $green }
+        else { $ctl.lblDays.Text = $S.vNA; & $setFg $ctl.lblDays $muted }
+
+        $ctl.lblSystem.Text = "$($m.Edition.Name) $($m.Edition.EditionId), build $($m.Edition.Build)"
+
+        if ($m.Installed) { $ctl.lblLevel.Text = "$($m.Level)  $($m.LevelName)"; & $setFg $ctl.lblLevel $text }
+        else { $ctl.lblLevel.Text = $S.vNotInstalled; & $setFg $ctl.lblLevel $muted }
+
+        if ($m.Watchdog) { $ctl.lblWatchdog.Text = $S.vRunning; & $setFg $ctl.lblWatchdog $green }
+        else { $ctl.lblWatchdog.Text = $S.vNotSet; & $setFg $ctl.lblWatchdog $(if ($m.Installed) { $red } else { $muted }) }
+
+        if ($m.InWindow) { $ctl.lblWindow.Text = $S.vOpen; & $setFg $ctl.lblWindow $amber }
+        else { $ctl.lblWindow.Text = $S.vClosed; & $setFg $ctl.lblWindow $text }
+
+        if ($m.Drift -eq 0) { $ctl.lblDrift.Text = $S.vNone; & $setFg $ctl.lblDrift $green }
+        else { $ctl.lblDrift.Text = ($S.vDrift -f $m.Drift); & $setFg $ctl.lblDrift $amber }
+
+        if (-not $m.DefenderOk) { $ctl.lblTrust.Text = $S.vNoDefender; & $setFg $ctl.lblTrust $muted }
+        elseif ($m.Trusted) { $ctl.lblTrust.Text = $S.vTrusted; & $setFg $ctl.lblTrust $green }
+        else { $ctl.lblTrust.Text = $S.vNotSet; & $setFg $ctl.lblTrust $muted }
+        $ctl.btnTrust.Content = $(if ($m.Trusted) { $S.bUntrust } else { $S.bTrust })
+
+        if ($m.Pending) { $ctl.lblPending.Text = $S.vPendingYes; & $setFg $ctl.lblPending $amber }
+        else { $ctl.lblPending.Text = $S.vNone; & $setFg $ctl.lblPending $text }
+
+        $ctl.btnL1.Background = (& $brush $(if ($m.Installed -and $m.Level -eq 1) { '#1E3A5F' } else { '#232C38' }))
+        $ctl.btnL2.Background = (& $brush $(if ($m.Installed -and $m.Level -eq 2) { '#1E3A5F' } else { '#232C38' }))
+        $ctl.btnL3.Background = (& $brush $(if ($m.Installed -and $m.Level -eq 3) { '#1E3A5F' } else { '#232C38' }))
+
+        try {
+            if (Test-Path $script:LogPath) { $ctl.lblLog.Text = ((Get-Content $script:LogPath -Tail 10) -join "`n") }
+            else { $ctl.lblLog.Text = $S.noLog }
+        } catch { $ctl.lblLog.Text = $S.logErr }
+    }
+
+    $applyLang = {
+        $S = $strings[$script:DashLang]
+        $ctl.txHero.Text = $S.hero; $ctl.txLevel.Text = $S.lvl; $ctl.txWatchdog.Text = $S.watchdog
+        $ctl.txWindow.Text = $S.window; $ctl.txDrift.Text = $S.drift; $ctl.txTrust.Text = $S.trust
+        $ctl.txPending.Text = $S.pending; $ctl.txSetLevel.Text = $S.setLevel
+        $ctl.btnWindow.Content = $S.bWindow; $ctl.btnClose.Content = $S.bClose; $ctl.btnCheck.Content = $S.bCheck
+        $ctl.btnRefresh.Content = $S.bRefresh; $ctl.btnRevert.Content = $S.bRevert
+        & $setFg $ctl.lnEN $(if ($script:DashLang -eq 'en') { $text } else { $muted })
+        & $setFg $ctl.lnRU $(if ($script:DashLang -eq 'ru') { $text } else { $muted })
+        & $refresh
+    }
+
+    $say = { param($msg, $hex = $green) $ctl.lblStatus.Text = $msg; & $setFg $ctl.lblStatus $hex }
+
+    $switchLang = {
+        param($lang)
+        $script:DashLang = $lang
+        try { $c = Get-Config; $c.lang = $lang; Save-Config $c } catch { $null = $_ }
+        & $applyLang
+    }
+    $ctl.lnEN.Add_MouseLeftButtonUp({ & $switchLang 'en' })
+    $ctl.lnRU.Add_MouseLeftButtonUp({ & $switchLang 'ru' })
+
+    $apply = {
+        param($lvl)
+        $S = $strings[$script:DashLang]
+        try {
+            & $say ($S.applying -f $lvl) $amber
+            $win.Dispatcher.Invoke([action]{}, 'Background')
+            $r = Install-Wstfu -Level $lvl
+            & $refresh
+            $wd = if ($r.WatchdogOk) { $S.wdRunning } else { $S.wdFailed }
+            & $say ($S.applied -f $lvl, $r.Enforce.Fixed.Count, $wd) $green
+        } catch { & $say ($S.err -f $_.Exception.Message) $red }
+    }
+    $ctl.btnL1.Add_Click({ & $apply 1 })
+    $ctl.btnL2.Add_Click({ & $apply 2 })
+    $ctl.btnL3.Add_Click({ & $apply 3 })
+
+    $ctl.btnWindow.Add_Click({
+        $S = $strings[$script:DashLang]
+        try {
+            $c = Get-Config; $c.windowUntil = ((Get-Date).AddHours(4)).ToString('s'); Save-Config $c
+            $null = Invoke-Enforce; & $refresh; & $say $S.winOpen $amber
+        } catch { & $say ($S.err -f $_.Exception.Message) $red }
+    })
+    $ctl.btnClose.Add_Click({
+        $S = $strings[$script:DashLang]
+        try {
+            $c = Get-Config; $c.windowUntil = $null; Save-Config $c
+            $null = Invoke-Enforce; & $refresh; & $say $S.winClosed $green
+        } catch { & $say ($S.err -f $_.Exception.Message) $red }
+    })
+    $ctl.btnCheck.Add_Click({
+        $S = $strings[$script:DashLang]
+        try { Start-Process 'ms-settings:windowsupdate'; & $say $S.updOpened $green }
+        catch { & $say ($S.err -f $_.Exception.Message) $red }
+    })
+    $ctl.btnTrust.Add_Click({
+        $S = $strings[$script:DashLang]
+        try {
+            if (Test-DefenderTrust) { $null = Disable-DefenderTrust; & $say $S.trustRemoved $green }
+            else {
+                switch (Enable-DefenderTrust) {
+                    'added'  { & $say $S.trustAdded $green }
+                    'denied' { & $say $S.trustDenied $red }
+                    'absent' { & $say $S.trustAbsent $amber }
+                    default  { & $say $S.trustAlready $green }
+                }
+            }
+            & $refresh
+        } catch { & $say ($S.err -f $_.Exception.Message) $red }
+    })
+    $ctl.btnRefresh.Add_Click({ $S = $strings[$script:DashLang]; & $refresh; & $say $S.refreshed $muted })
+    $ctl.btnRevert.Add_Click({
+        $S = $strings[$script:DashLang]
+        $ans = [Windows.MessageBox]::Show($S.confirm, $S.confirmTitle, 'YesNo', 'Warning')
+        if ($ans -eq 'Yes') {
+            try { $n = Reset-Wstfu; & $refresh; & $say ($S.reverted -f $n) $amber }
+            catch { & $say ($S.err -f $_.Exception.Message) $red }
+        }
+    })
+
+    & $applyLang
+    & $say ($strings[$script:DashLang].ready) $muted
+    $null = $win.ShowDialog()
+}
 
 #region ------------------------------------------------------------ entry point
 
@@ -1171,6 +1666,9 @@ function Invoke-Main {
         'window'  { Invoke-Window -Duration $For }
         'close'   { Invoke-CloseWindow }
         'speak'   { Invoke-Speak }
+        'trust'   { Invoke-Trust }
+        'untrust' { Invoke-Untrust }
+        'dashboard' { Show-Dashboard }
         'enforce' { $null = Invoke-Enforce }
     }
 }

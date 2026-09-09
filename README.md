@@ -75,7 +75,9 @@ three things and ask for elevation themselves.
 | `wstfu.ps1 shutup [-Level 1\|2\|3] [-Yes]` | Applies a level and installs the watchdog. |
 | `wstfu.ps1 window 4h` | Opens a maintenance window: pause and deferrals lifted so you can install on purpose. Reboot control stays on. Closes itself when the time is up. |
 | `wstfu.ps1 close` | Closes that window right now. |
-| `wstfu.ps1 speak` | Full revert to Microsoft defaults, watchdog removed. |
+| `wstfu.ps1 dashboard` | Open the control panel: a native window with live status, one-click level switching, the window, trust and revert, and an EN/RU switch. Needs elevation (it self-elevates). |
+| `wstfu.ps1 trust` / `untrust` | Add / remove a Defender exclusion for the WSTFU folder. |
+| `wstfu.ps1 speak` | Full revert to Microsoft defaults, watchdog removed. Also removes the Defender exclusion. |
 | `wstfu.ps1 enforce` | One silent pass. This is what the watchdog runs. |
 
 Durations are `30m`, `4h`, `2d`, or a bare number meaning hours.

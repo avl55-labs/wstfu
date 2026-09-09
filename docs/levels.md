@@ -181,6 +181,32 @@ Disabled at every level, on a best-effort basis:
 
 ---
 
+## Antivirus (the `trust` command)
+
+Code signing does not make antivirus ignore a program - it proves identity, not
+harmlessness. What silences a false positive is reputation, and a behavioural PUA
+flag (which is what update-blocking tools attract) is not silenced by a signature
+at all. So WSTFU does not ship a signed exe. Instead:
+
+```powershell
+.\wstfu.ps1 trust     # add C:\ProgramData\WSTFU to Defender's exclusions
+.\wstfu.ps1 untrust   # remove it (speak removes it too)
+```
+
+This stops Defender scanning and flagging the installed script as a file-based
+threat. It does **not** change Defender's behaviour monitoring - a path exclusion
+cannot - and it is a no-op if a third-party AV is running instead (exclude the
+folder there by hand). `status` shows whether the exclusion is set.
+
+## The dashboard
+
+`wstfu.ps1 dashboard` opens a native control panel - built on WPF, which ships
+with Windows, so there is no exe and no dependency. It self-elevates, shows the
+same status the CLI does as live tiles, and gives one-click buttons for level,
+window, trust and revert. A small EN / RU switch in the corner changes the
+language and remembers the choice in `config.json`. Everything it does is a call
+into the same engine the CLI and watchdog use - there is no second code path.
+
 ## The maintenance window
 
 `wstfu.ps1 window 4h` temporarily drops to level 1 behaviour:

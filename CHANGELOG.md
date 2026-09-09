@@ -8,6 +8,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 First public beta. Reboot control only; everything else is backlog.
 
 ### Added
+- A `dashboard` command: a native WPF control panel (no exe, no dependencies -
+  WPF ships with .NET) with live status tiles, one-click level switching, the
+  maintenance window, Defender trust and revert, plus an EN/RU language switch
+  that is remembered in `config.json`.
+- `trust` / `untrust`: add or remove a Windows Defender path exclusion for the
+  WSTFU folder, so Defender stops flagging the installed script. `speak` removes
+  it too. Honest about what it does and does not cover (file scans yes, behaviour
+  monitoring no).
+- `status` now reports the update services (`wuauserv`, `UsoSvc`, `WaaSMedicSvc`,
+  `BITS`, `DoSvc`) it never touches, so a blocker tool's damage is visible, and
+  the AV-trust state.
 - Three noise levels chosen at install time: `mute`, `quiet`, `stfu` (default).
 - `status` as the default command - read-only, changes nothing, safe to run first.
 - Declarative settings table: apply, verify, report and revert are four passes
@@ -20,6 +31,17 @@ First public beta. Reboot control only; everything else is backlog.
 - Reboot history report, including "days since Windows rebooted this PC without
   asking".
 - Pester unit tests over the pure logic and PSScriptAnalyzer in CI.
+
+### Fixed on real hardware
+- `status` no longer dies on a clean machine: schtasks writes "task not found"
+  to stderr, which Windows PowerShell 5.1 turns into a terminating error under
+  `$ErrorActionPreference = 'Stop'`. All native calls now go through a wrapper.
+- Windows version is read from the build number, not `ProductName` - the latter
+  still says "Windows 10 Pro" on Windows 11.
+- Orchestrator task state reads `unreadable` (not a false `absent`) when not
+  elevated.
+- The file is saved UTF-8 with BOM so PowerShell 5.1 reads the Russian UI
+  strings correctly.
 
 ### Known limits
 - `AUOptions` / `AutoInstallMinorUpdates` are kept but flagged `legacy`: Windows
