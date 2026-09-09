@@ -234,6 +234,24 @@ Describe 'Test-UninvitedReboot' {
     }
 }
 
+Describe 'ConvertTo-WatchdogState' {
+
+    It 'reports present on a clean query' {
+        ConvertTo-WatchdogState -ExitCode 0 | Should -Be 'present'
+    }
+
+    It 'reports unknown on access denied - never a false NOT REGISTERED' {
+        # This is the bug a real non-elevated run exposed: an ACL-protected
+        # SYSTEM task denies the query, and calling that 'absent' is a lie.
+        ConvertTo-WatchdogState -ExitCode 1 -Output 'ERROR: Access is denied.' | Should -Be 'unknown'
+    }
+
+    It 'reports absent when the task genuinely is not there' {
+        ConvertTo-WatchdogState -ExitCode 1 -Output 'ERROR: The system cannot find the file specified.' |
+            Should -Be 'absent'
+    }
+}
+
 Describe 'Watchdog task definition' {
 
     BeforeAll {

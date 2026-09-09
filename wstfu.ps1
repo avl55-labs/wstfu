@@ -546,9 +546,31 @@ function Get-WatchdogXml {
 "@
 }
 
-function Test-WatchdogPresent {
+function ConvertTo-WatchdogState {
+    <#
+    .SYNOPSIS
+        Classify a schtasks query result into present / absent / unknown.
+    .NOTES
+        The watchdog task is owned by SYSTEM and ACL'd, so a non-elevated query
+        gets 'Access is denied' - that is 'unknown', NOT 'absent'. Reporting it
+        as absent (a red NOT REGISTERED) is a lie that sends people chasing a
+        problem that is not there. Pure, so it can be unit-tested.
+    #>
+    param([Parameter(Mandatory)][int]$ExitCode, [string]$Output = '')
+    if ($ExitCode -eq 0) { return 'present' }
+    if ($Output -match 'Access is denied|denied') { return 'unknown' }
+    if ($Output -match 'cannot find|does not exist') { return 'absent' }
+    return 'absent'
+}
+
+function Get-WatchdogState {
     $query = Invoke-Native -File 'schtasks.exe' -Arguments @('/Query', '/TN', $script:TaskName)
-    return ($query.ExitCode -eq 0)
+    return (ConvertTo-WatchdogState -ExitCode $query.ExitCode -Output $query.Output)
+}
+
+function Test-WatchdogPresent {
+    <# True only when definitely present. 'unknown' is not 'present'. #>
+    return ((Get-WatchdogState) -eq 'present')
 }
 
 function Install-Watchdog {
@@ -866,7 +888,7 @@ function Invoke-Enforce {
 
     # Self-healing: if the watchdog task went missing, put it back.
     $healed = $false
-    if ((Test-Path $script:InstalledPs) -and -not (Test-WatchdogPresent)) {
+    if ((Test-Path $script:InstalledPs) -and (Get-WatchdogState) -eq 'absent') {
         $healed = Install-Watchdog
         if ($healed) { Write-GuardLog 'Watchdog task was missing - recreated.' 'WARN' }
     }
@@ -960,9 +982,16 @@ function Show-Status {
         Write-Out "  Window    : OPEN until $($config.windowUntil) - updates allowed, reboots still yours" 'Yellow'
     }
 
-    $wd = Test-WatchdogPresent
-    Write-Out ("  Watchdog  : {0}" -f $(if ($wd) { 'registered (SYSTEM, boot + every 10 min)' } else { 'NOT REGISTERED' })) `
-        $(if ($wd) { 'Gray' } else { 'Red' })
+    $wdState = Get-WatchdogState
+    $installedNow = Test-Path $script:InstalledPs
+    switch ($wdState) {
+        'present' { Write-Out '  Watchdog  : registered (SYSTEM, boot + every 10 min)' 'Green' }
+        'unknown' { Write-Out '  Watchdog  : cannot read without admin - re-run status elevated to confirm' 'DarkYellow' }
+        'absent'  {
+            if ($installedNow) { Write-Out '  Watchdog  : NOT REGISTERED' 'Red' }
+            else               { Write-Out '  Watchdog  : not registered (nothing installed yet)' 'Gray' }
+        }
+    }
 
     $state = Get-GuardState
     if ($state.lastEnforce) {
@@ -1060,6 +1089,22 @@ function Show-Status {
     }
     if (-not $installed) {
         Write-Out '  Nothing is installed yet. To apply:  .\wstfu.ps1 shutup' 'White'
+    }
+
+    # If we are not elevated, the watchdog and the orchestrator tasks read as
+    # 'unknown' - offer to re-run with admin rights so the picture is real.
+    if (-not (Test-Admin) -and [Environment]::UserInteractive) {
+        Write-Out ''
+        $ans = Read-Host '  Watchdog and tasks need admin to read. Re-run elevated now? [Y/n]'
+        if ($ans -notmatch '^(n|no)$') {
+            try {
+                Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit',
+                    '-File', "`"$PSCommandPath`"", 'status')
+            } catch {
+                Write-Out '  Elevation was declined - showing what a normal user can see.' 'DarkYellow'
+            }
+        }
     }
     Write-Out ''
 }
