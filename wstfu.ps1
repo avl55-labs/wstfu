@@ -1365,6 +1365,14 @@ function Install-Wstfu {
     if (-not (Test-Path $script:HomeDir)) {
         New-Item -ItemType Directory -Path $script:HomeDir -Force | Out-Null
     }
+
+    # Best-effort self-exclusion FIRST, so Defender does not flag the files or the
+    # coming actions. This helps only when Defender let the script start in the
+    # first place; if Tamper Protection is on, the change is refused (we report
+    # 'denied' and carry on), and if Defender already quarantined the file no code
+    # here runs at all - both cases need a one-time manual exclusion in the UI.
+    $trust = Enable-DefenderTrust
+
     $me = $PSCommandPath
     if ($me -and ((Resolve-Path $me).Path -ne $script:InstalledPs)) {
         Copy-Item -Path $me -Destination $script:InstalledPs -Force
@@ -1394,7 +1402,7 @@ function Install-Wstfu {
     $null = Invoke-Native -File 'gpupdate.exe' -Arguments @('/force')
     Write-GuardLog "Installed at level $Level."
 
-    return [pscustomobject]@{ Enforce = $enforce; WatchdogOk = $ok }
+    return [pscustomobject]@{ Enforce = $enforce; WatchdogOk = $ok; Trust = $trust }
 }
 
 function Invoke-Shutup {
@@ -1433,6 +1441,15 @@ function Invoke-Shutup {
 
     Write-Out ''
     Write-Out "  Applied   : $($result.Fixed.Count) setting(s) written, $($result.Failed.Count) refused" 'Green'
+    switch ($install.Trust) {
+        'added'  { Write-Out '  Defender  : folder excluded so scans do not flag WSTFU' 'Green' }
+        'ok'     { Write-Out '  Defender  : folder already excluded' 'Green' }
+        'denied' { Write-Out '  Defender  : could not add exclusion - Tamper Protection is on.' 'DarkYellow'
+                   Write-Out '              If Defender flags WSTFU, add C:\ProgramData\WSTFU by hand:' 'DarkGray'
+                   Write-Out '              Windows Security > Virus & threat protection > Manage settings >' 'DarkGray'
+                   Write-Out '              Exclusions > Add a folder.' 'DarkGray' }
+        default  { }   # 'absent' - third-party AV, nothing to do here
+    }
     Write-Out ("  Watchdog  : {0}" -f $(if ($ok) { 'registered - SYSTEM, at boot and every 10 minutes' } else { 'FAILED to register, see the log' })) `
         $(if ($ok) { 'Green' } else { 'Red' })
     if ($result.TasksDenied.Count) {

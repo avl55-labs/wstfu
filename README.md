@@ -178,6 +178,44 @@ worse than no tool.
   for a workstation off the public network. If that is not your situation, use
   level 1 or 2.
 
+## Troubleshooting: Microsoft Defender
+
+Defender may flag WSTFU. Not as a virus - as a *potentially unwanted app*,
+because disabling update-reboot tasks is behaviour its heuristics distrust.
+Signed, reputable tools in this space get the same label. That is expected.
+
+`shutup` tries to add its own folder (`C:\ProgramData\WSTFU`) to Defender's
+exclusions as its first step, so scans leave it alone. That works only when:
+
+- Defender let the script start at all (if it already quarantined `wstfu.ps1`,
+  no code ran - restore the file first, see below); and
+- **Tamper Protection is off.** Tamper Protection (on by default on Windows 11)
+  blocks *any* script from changing exclusions - by design. When it is on,
+  `shutup` prints `Defender: could not add exclusion` and you add it by hand,
+  once:
+
+  **Windows Security → Virus & threat protection → Manage settings → Exclusions
+  → Add or remove exclusions → Add a folder → `C:\ProgramData\WSTFU`.**
+
+  Add the folder you run `wstfu.ps1` from too, then run `shutup`.
+
+If Defender already quarantined the file: **Windows Security → Protection history
+→ pick the WSTFU entry → Restore**, then add the exclusion above, then install.
+
+To see exactly what Defender did (elevated PowerShell):
+
+```powershell
+Get-MpThreatDetection | Select-Object InitialDetectionTime, ThreatID, Resources | Format-List
+Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -MaxEvents 40 |
+  Where-Object Id -in 1116,1117,1015,5001 | Select-Object TimeCreated, Id, Message | Format-List
+```
+
+**WSTFU never disables Defender, and never will.** A tool that turns your
+antivirus off is doing exactly what malware does - it would (rightly) get flagged
+harder, it is blocked by Tamper Protection anyway, and it leaves the machine
+exposed if it fails mid-run. Changing an exclusion is the most it touches, and
+`untrust` (and `speak`) put that back.
+
 ## Uninstall
 
 ```powershell
