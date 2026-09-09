@@ -33,7 +33,7 @@
     Justification = 'Passed through as -NoPrompt:$Yes; the analyzer does not follow switch splatting.')]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('status', 'shutup', 'window', 'close', 'speak', 'trust', 'untrust', 'enforce', 'dashboard', 'help')]
+    [ValidateSet('status', 'shutup', 'window', 'close', 'speak', 'trust', 'untrust', 'report', 'enforce', 'dashboard', 'help')]
     [string]$Command = 'status',
 
     # 0 means "not supplied" - shutup then asks, or defaults to 3 with -Yes.
@@ -53,16 +53,30 @@ $ErrorActionPreference = 'Stop'
 #region ------------------------------------------------------------- constants
 
 $script:Version    = '1.0.0-beta'
-# ProgramData is absent when the file is dot-sourced by the test suite on a
-# non-Windows CI leg; the fallback keeps the pure logic loadable anywhere.
-$script:ProgramData = if ($env:ProgramData) { $env:ProgramData } else { [IO.Path]::GetTempPath() }
-$script:SystemRoot  = if ($env:SystemRoot) { $env:SystemRoot } else { 'C:\Windows' }
+# Resolve ProgramData from the OS, NOT from $env:ProgramData - that variable can
+# come through empty in some spawned/host contexts, and the old temp-dir fallback
+# then pointed the whole tool at a per-user Temp folder, so it reported 'not
+# installed' while the real install sat untouched in C:\ProgramData. Found on a
+# real box. GetFolderPath is reliable, and returns a sane path on Linux CI too.
+$script:ProgramData = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+if (-not $script:ProgramData) {
+    $script:ProgramData = if ($env:ProgramData) { $env:ProgramData } else { 'C:\ProgramData' }
+}
+$script:SystemRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
+if (-not $script:SystemRoot) {
+    $script:SystemRoot = if ($env:SystemRoot) { $env:SystemRoot } else { 'C:\Windows' }
+}
 $script:HomeDir    = Join-Path $script:ProgramData 'WSTFU'
+# Per-user, always-writable spot for the report artifact (the report task runs
+# as the signed-in user, who has read-only rights on the hardened HomeDir).
+$script:UserDir    = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'WSTFU'
+$script:ReportPath = Join-Path $script:UserDir 'last-report.txt'
 $script:InstalledPs = Join-Path $script:HomeDir 'wstfu.ps1'
 $script:LogPath    = Join-Path $script:HomeDir 'wstfu.log'
 $script:ConfigPath = Join-Path $script:HomeDir 'config.json'
 $script:StatePath  = Join-Path $script:HomeDir 'state.json'
 $script:TaskName   = 'WSTFU'
+$script:ReportTaskName = 'WSTFU Report'
 $script:MaxLogBytes = 1MB
 
 $script:RegWU = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
@@ -595,6 +609,226 @@ function Uninstall-Watchdog {
 
 #endregion
 
+#region ---------------------------------------------------- the weekly report
+
+function Format-ReportSummary {
+    <#
+    .SYNOPSIS
+        Build the toast title and body from plain facts. Pure - no UI, no reads -
+        so the wording is unit-tested instead of eyeballed once and forgotten.
+    #>
+    param(
+        [int]$Level = 1,
+        $Days = $null,               # int, or $null when the log is empty
+        [bool]$HasHistory = $true,
+        [int]$Corrections = 0,
+        [ValidateSet('present', 'absent', 'unknown')][string]$WatchdogState = 'present',
+        [bool]$SettingsOk = $true,
+        $LastPassMinutes = $null,    # int, or $null when unknown
+        [bool]$Installed = $true,
+        [ValidateSet('en', 'ru')][string]$Lang = 'en'
+    )
+
+    $ru = ($Lang -eq 'ru')
+    $problems = @()
+    if (-not $SettingsOk) { $problems += $(if ($ru) { 'настройки сбиты' } else { 'settings drifted' }) }
+    if ($WatchdogState -eq 'absent') { $problems += $(if ($ru) { 'сторож пропал' } else { 'watchdog gone' }) }
+    if ($null -ne $LastPassMinutes -and $LastPassMinutes -gt 20) {
+        $problems += $(if ($ru) { "сторож молчит $LastPassMinutes мин" } else { "watchdog silent ${LastPassMinutes}m" })
+    }
+
+    if (-not $Installed) {
+        return [pscustomobject]@{
+            Title = 'WSTFU'
+            Text  = $(if ($ru) { 'Не установлен.' } else { 'Not installed.' })
+            Ok    = $false
+        }
+    }
+
+    # headline: the number that matters
+    $head = if ($null -ne $Days) {
+        if ($ru) { "$Days дн. без непрошеной перезагрузки" } else { "$Days days, no forced reboot" }
+    } elseif ($HasHistory) {
+        $(if ($ru) { 'непрошеных перезагрузок не видно' } else { 'no forced reboot seen' })
+    } else {
+        $(if ($ru) { 'история перезагрузок недоступна' } else { 'reboot history unavailable' })
+    }
+
+    if ($problems.Count) {
+        $title = $(if ($ru) { 'WSTFU: нужно внимание' } else { 'WSTFU: needs a look' })
+        $body  = if ($ru) {
+            "$head. Проблема: $($problems -join ', '). Запусти: wstfu.ps1 status"
+        } else {
+            "$head. Problem: $($problems -join ', '). Run: wstfu.ps1 status"
+        }
+        return [pscustomobject]@{ Title = $title; Text = $body; Ok = $false }
+    }
+
+    $lvlName = $script:LevelNames[$Level]
+    $title = if ($ru) { "WSTFU: держит (L$Level $lvlName)" } else { "WSTFU: holding (L$Level $lvlName)" }
+    $body  = $head + '. '
+    $body += if ($ru) { 'Сторож жив, настройки на месте.' } else { 'Watchdog alive, settings intact.' }
+    if ($Corrections -gt 0) {
+        $body += if ($ru) { " С прошлой проверки поправил сбитого: $Corrections." } else { " Fixed $Corrections drift(s) since last check." }
+    }
+    return [pscustomobject]@{ Title = $title; Text = $body; Ok = $true }
+}
+
+function Get-ReportData {
+    <# Gather the facts the summary needs. Read-only, no admin required. #>
+    $config  = Get-Config
+    $history = Get-RebootHistory
+    $lastBad = $history | Where-Object { $_.Uninvited } | Select-Object -First 1
+    $days    = if ($lastBad) { [int]((Get-Date) - $lastBad.Time).TotalDays } else { $null }
+
+    $plan = Get-WstfuPlan -Level ([int]$config.level)
+    $settingsOk = -not (@($plan | Where-Object {
+        -not (Test-SettingSatisfied -Setting $_ -Current (Get-CurrentValue $_))
+    }).Count)
+
+    $state = Get-GuardState
+    $lastPassMin = $null
+    if ($state.lastEnforce) {
+        try { $lastPassMin = [int]((Get-Date) - [datetime]$state.lastEnforce).TotalMinutes }
+        catch { $lastPassMin = $null }
+    }
+
+    [pscustomobject]@{
+        Level          = [int]$config.level
+        Lang           = $config.lang
+        Days           = $days
+        HasHistory     = ($history.Count -gt 0)
+        Corrections    = [Math]::Max(0, [int]$state.totalCorrections - [int]$state.correctionsAtReport)
+        WatchdogState  = (Get-WatchdogState)
+        SettingsOk     = [bool]$settingsOk
+        LastPassMinutes = $lastPassMin
+        Installed      = (Test-Path $script:InstalledPs)
+    }
+}
+
+function Show-Toast {
+    <#
+    .SYNOPSIS
+        A dismissable Windows notification via a tray balloon - rendered as a
+        toast in the Action Center on Windows 10/11, swipe to dismiss. No module,
+        no AppUserModelID registration, works on a bare box. Needs a user session.
+    #>
+    param([Parameter(Mandatory)][string]$Title, [Parameter(Mandatory)][string]$Text)
+    try {
+        Add-Type -AssemblyName System.Windows.Forms, System.Drawing -ErrorAction Stop
+        $ni = New-Object System.Windows.Forms.NotifyIcon
+        $ni.Icon = [System.Drawing.SystemIcons]::Information
+        $ni.BalloonTipTitle = $Title
+        $ni.BalloonTipText  = $Text
+        $ni.Visible = $true
+        $ni.ShowBalloonTip(12000)
+        Start-Sleep -Seconds 13
+        $ni.Dispose()
+        return $true
+    } catch {
+        Write-GuardLog "Toast failed: $($_.Exception.Message)" 'WARN'
+        return $false
+    }
+}
+
+function Get-ReportTaskXml {
+    <# Weekly, in the interactive user's session (a toast needs one), no admin. #>
+    param([Parameter(Mandatory)][string]$ScriptPath, [Parameter(Mandatory)][string]$UserSid)
+    $ps  = "$($script:SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $arg = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptPath`" report"
+    @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>WSTFU</Author>
+    <Description>Weekly WSTFU health summary shown to the signed-in user as a toast.</Description>
+    <URI>\$($script:ReportTaskName)</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2020-01-06T10:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByWeek>
+        <DaysOfWeek><Monday /></DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$UserSid</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT2M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$ps</Command>
+      <Arguments>$arg</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+}
+
+function Register-ReportTask {
+    $sid = ([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+    $xmlPath = Join-Path $env:TEMP "wstfu-report-$PID.xml"
+    try {
+        Get-ReportTaskXml -ScriptPath $script:InstalledPs -UserSid $sid |
+            Set-Content -Path $xmlPath -Encoding Unicode
+        $r = Invoke-Native -File 'schtasks.exe' -Arguments @('/Create', '/TN', $script:ReportTaskName, '/XML', $xmlPath, '/F')
+        if ($r.ExitCode -ne 0) { throw $r.Output }
+        return $true
+    } catch {
+        Write-GuardLog "Report task registration failed: $($_.Exception.Message)" 'WARN'
+        return $false
+    } finally {
+        Remove-Item $xmlPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Unregister-ReportTask {
+    $null = Invoke-Native -File 'schtasks.exe' -Arguments @('/Delete', '/TN', $script:ReportTaskName, '/F')
+}
+
+function Invoke-Report {
+    <# What the weekly task runs: gather, log, and toast the summary. #>
+    $d = Get-ReportData
+    $s = Format-ReportSummary -Level $d.Level -Days $d.Days -HasHistory $d.HasHistory `
+        -Corrections $d.Corrections -WatchdogState $d.WatchdogState -SettingsOk $d.SettingsOk `
+        -LastPassMinutes $d.LastPassMinutes -Installed $d.Installed -Lang $d.Lang
+    Write-GuardLog "Report: $($s.Title) - $($s.Text)"
+    try {
+        $st = Get-GuardState
+        $st.correctionsAtReport = [int]$st.totalCorrections
+        Save-GuardState $st
+    } catch {
+        Write-GuardLog "Could not advance report baseline: $($_.Exception.Message)" 'WARN'
+    }
+    try {
+        if (-not (Test-Path $script:UserDir)) { New-Item -ItemType Directory -Path $script:UserDir -Force | Out-Null }
+        Set-Content -Path $script:ReportPath -Value "$($s.Title)`r`n$($s.Text)" -Encoding UTF8
+    } catch {
+        Write-GuardLog "Could not write last-report.txt: $($_.Exception.Message)" 'WARN'
+    }
+    $null = Show-Toast -Title $s.Title -Text $s.Text
+}
+
+#endregion
+
 #region --------------------------------------------------------- config & state
 
 function Get-Config {
@@ -618,12 +852,23 @@ function Get-Config {
     return $default
 }
 
-function Save-Config {
-    param([Parameter(Mandatory)]$Config)
+function Save-Json {
+    <# Atomic JSON write: temp file in the same folder, then replace. A reader
+       colliding with a write sees the old file or the new one, never a truncated
+       one - which is how a status/report run could momentarily read 'level 3,
+       not installed' while the watchdog was mid-save. #>
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Object)
     if (-not (Test-Path $script:HomeDir)) {
         New-Item -ItemType Directory -Path $script:HomeDir -Force | Out-Null
     }
-    $Config | ConvertTo-Json -Depth 4 | Set-Content -Path $script:ConfigPath -Encoding UTF8
+    $tmp = "$Path.$PID.tmp"
+    $Object | ConvertTo-Json -Depth 4 | Set-Content -Path $tmp -Encoding UTF8
+    Move-Item -Path $tmp -Destination $Path -Force
+}
+
+function Save-Config {
+    param([Parameter(Mandatory)]$Config)
+    Save-Json -Path $script:ConfigPath -Object $Config
 }
 
 function Get-GuardState {
@@ -631,12 +876,13 @@ function Get-GuardState {
         lastEnforce      = $null
         lastCorrection   = $null
         totalCorrections = 0
+        correctionsAtReport = 0
         lastFixedIds     = @()
     }
     if (-not (Test-Path $script:StatePath)) { return $default }
     try {
         $raw = Get-Content $script:StatePath -Raw -ErrorAction Stop | ConvertFrom-Json
-        foreach ($k in 'lastEnforce', 'lastCorrection', 'totalCorrections', 'lastFixedIds') {
+        foreach ($k in 'lastEnforce', 'lastCorrection', 'totalCorrections', 'correctionsAtReport', 'lastFixedIds') {
             if ($raw.PSObject.Properties.Name -contains $k) { $default.$k = $raw.$k }
         }
     } catch {
@@ -648,10 +894,7 @@ function Get-GuardState {
 function Save-GuardState {
     param([Parameter(Mandatory)]$State)
     try {
-        if (-not (Test-Path $script:HomeDir)) {
-            New-Item -ItemType Directory -Path $script:HomeDir -Force | Out-Null
-        }
-        $State | ConvertTo-Json -Depth 4 | Set-Content -Path $script:StatePath -Encoding UTF8
+        Save-Json -Path $script:StatePath -Object $State
     } catch {
         Write-GuardLog "Could not save state.json: $($_.Exception.Message)" 'WARN'
     }
@@ -1141,7 +1384,13 @@ function Install-Wstfu {
     Save-Config $config
 
     $enforce = Invoke-Enforce
+    # Baseline the weekly drift counter: the settings this install just wrote are
+    # not 'drift', so the first report must not count them.
+    $st = Get-GuardState
+    $st.correctionsAtReport = [int]$st.totalCorrections
+    Save-GuardState $st
     $ok = Install-Watchdog
+    $null = Register-ReportTask
     $null = Invoke-Native -File 'gpupdate.exe' -Arguments @('/force')
     Write-GuardLog "Installed at level $Level."
 
@@ -1243,6 +1492,7 @@ function Invoke-Speak {
     Write-GuardLog '=== speak: full revert ==='
 
     $null = Uninstall-Watchdog
+    $null = Unregister-ReportTask
 
     $removed = 0
     foreach ($s in (Get-WstfuPlan -Level 3)) {
@@ -1315,6 +1565,7 @@ function Show-Help {
     Write-Out '    .\wstfu.ps1 untrust            remove that exclusion'
     Write-Out '    .\wstfu.ps1 speak               undo everything, Microsoft defaults'
     Write-Out '    .\wstfu.ps1 dashboard          open the control panel window'
+    Write-Out '    .\wstfu.ps1 report             show the weekly summary toast now'
     Write-Out '    .\wstfu.ps1 enforce             one silent pass (what the watchdog runs)'
     Write-Out ''
     Write-Out '  LEVELS' 'White'
@@ -1327,6 +1578,7 @@ function Show-Help {
 function Reset-Wstfu {
     <# Non-interactive core of 'speak': undo everything, return count removed. #>
     $null = Uninstall-Watchdog
+    $null = Unregister-ReportTask
     $removed = 0
     foreach ($s in (Get-WstfuPlan -Level 3)) {
         if (Remove-SettingValue $s) { $removed++ }
@@ -1714,6 +1966,7 @@ function Invoke-Main {
         'trust'   { Invoke-Trust }
         'untrust' { Invoke-Untrust }
         'dashboard' { Show-Dashboard }
+        'report'  { Invoke-Report }
         'enforce' { $null = Invoke-Enforce }
     }
 }

@@ -5,6 +5,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [1.0.0-beta] - 2026-09-09
 
+### Added after first beta
+- **Control-panel dashboard** (`dashboard`): a native WPF window - live status
+  tiles, one-click level switch, maintenance window, trust and revert, EN/RU.
+  No exe, no dependencies.
+- **Defender trust** (`trust` / `untrust`): a path exclusion for the WSTFU
+  folder, removed again by `speak`. Honest about what it does and does not do.
+- **Weekly self-report** (`report`): a scheduled task, in the signed-in user's
+  session, pops a dismissable Windows toast once a week - days since an
+  uninvited reboot, whether the watchdog is alive and settings held, and any
+  drift it corrected. Runs entirely on the machine, no cloud, no account.
+- `status` now lists the update services WSTFU never touches (so a blunt blocker
+  tool's fingerprints show), and the Defender-trust state.
+
+### Fixed on real hardware
+- A native-stderr crash that killed `status` on a clean machine (PowerShell 5.1
+  turns schtasks' stderr into a terminating error).
+- Windows 11 detection: `ProductName` still says "Windows 10 Pro", so the build
+  number is used instead.
+- `status` no longer reports the watchdog as NOT REGISTERED when a non-elevated
+  run simply cannot read the SYSTEM-owned task - it says so, and offers to
+  re-run elevated.
+- Path resolution no longer trusts `$env:ProgramData` (it can be empty in some
+  spawned contexts, which sent the tool at a Temp folder); the OS API is used.
+- Config and state are written atomically, so a reader never catches a
+  half-written file.
+
 First public beta. Reboot control only; everything else is backlog.
 
 ### Added

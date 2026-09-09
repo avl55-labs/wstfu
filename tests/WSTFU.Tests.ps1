@@ -1,4 +1,4 @@
-#requires -Modules Pester
+﻿#requires -Modules Pester
 
 <#
     Unit tests for the pure logic of wstfu.ps1.
@@ -249,6 +249,73 @@ Describe 'ConvertTo-WatchdogState' {
     It 'reports absent when the task genuinely is not there' {
         ConvertTo-WatchdogState -ExitCode 1 -Output 'ERROR: The system cannot find the file specified.' |
             Should -Be 'absent'
+    }
+}
+
+Describe 'Format-ReportSummary' {
+
+    It 'leads with the days-clean number and reads as OK when all is well' {
+        $r = Format-ReportSummary -Level 1 -Days 7 -WatchdogState present -SettingsOk $true -LastPassMinutes 3 -Installed $true
+        $r.Ok | Should -BeTrue
+        $r.Text | Should -BeLike '*7 days*'
+        $r.Text | Should -BeLike '*Watchdog alive*'
+    }
+
+    It 'flags every real problem and points at status' {
+        $r = Format-ReportSummary -Level 1 -Days 0 -WatchdogState absent -SettingsOk $false -LastPassMinutes 40 -Installed $true
+        $r.Ok | Should -BeFalse
+        $r.Text | Should -BeLike '*settings drifted*'
+        $r.Text | Should -BeLike '*watchdog gone*'
+        $r.Text | Should -BeLike '*wstfu.ps1 status*'
+    }
+
+    It 'does not cry wolf when the last pass is recent' {
+        $r = Format-ReportSummary -Level 1 -Days 3 -WatchdogState present -SettingsOk $true -LastPassMinutes 8 -Installed $true
+        $r.Ok | Should -BeTrue
+    }
+
+    It 'treats a stale last pass as a problem' {
+        $r = Format-ReportSummary -Level 1 -Days 3 -WatchdogState present -SettingsOk $true -LastPassMinutes 25 -Installed $true
+        $r.Ok | Should -BeFalse
+    }
+
+    It 'mentions corrections only when there were some' {
+        (Format-ReportSummary -Level 1 -Days 5 -Corrections 0 -Installed $true).Text | Should -Not -BeLike '*drift*'
+        (Format-ReportSummary -Level 1 -Days 5 -Corrections 3 -Installed $true).Text | Should -BeLike '*3 drift(s) since last check*'
+    }
+
+    It 'speaks Russian when asked' {
+        $r = Format-ReportSummary -Level 1 -Days 7 -Installed $true -Lang ru
+        $r.Title | Should -BeLike '*держит*'
+    }
+
+    It 'says plainly when nothing is installed' {
+        (Format-ReportSummary -Installed $false).Text | Should -Be 'Not installed.'
+    }
+
+    It 'stays inside a balloon-tip length budget' {
+        $r = Format-ReportSummary -Level 1 -Days 0 -WatchdogState absent -SettingsOk $false -LastPassMinutes 99 -Installed $true
+        $r.Text.Length | Should -BeLessThan 256
+    }
+}
+
+Describe 'Report task definition' {
+
+    BeforeAll {
+        $script:RXml = [xml](Get-ReportTaskXml -ScriptPath 'C:\ProgramData\WSTFU\wstfu.ps1' -UserSid 'S-1-5-21-1-2-3-1001')
+    }
+
+    It 'runs in the interactive user session, not as SYSTEM (a toast needs a desktop)' {
+        $script:RXml.Task.Principals.Principal.LogonType | Should -Be 'InteractiveToken'
+        $script:RXml.Task.Principals.Principal.UserId | Should -Be 'S-1-5-21-1-2-3-1001'
+    }
+
+    It 'fires weekly' {
+        $script:RXml.Task.Triggers.CalendarTrigger.ScheduleByWeek.WeeksInterval | Should -Be '1'
+    }
+
+    It 'runs the report command' {
+        $script:RXml.Task.Actions.Exec.Arguments | Should -BeLike '*report*'
     }
 }
 

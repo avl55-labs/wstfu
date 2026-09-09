@@ -78,6 +78,9 @@ three things and ask for elevation themselves.
 | `wstfu.ps1 dashboard` | Open the control panel: a native window with live status, one-click level switching, the window, trust and revert, and an EN/RU switch. Needs elevation (it self-elevates). |
 | `wstfu.ps1 trust` / `untrust` | Add / remove a Defender exclusion for the WSTFU folder. |
 | `wstfu.ps1 speak` | Full revert to Microsoft defaults, watchdog removed. Also removes the Defender exclusion. |
+| `wstfu.ps1 trust` | Add the WSTFU folder to Microsoft Defender's exclusions (stops file-based flags). Removed by `speak`. |
+| `wstfu.ps1 report` | Show the weekly health summary as a toast right now. |
+| `wstfu.ps1 dashboard` | Open the control panel window (native, no dependencies). |
 | `wstfu.ps1 enforce` | One silent pass. This is what the watchdog runs. |
 
 Durations are `30m`, `4h`, `2d`, or a bare number meaning hours.
