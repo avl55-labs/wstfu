@@ -41,25 +41,33 @@ updates may show up. [What each level changes, setting by setting →](docs/leve
 
 ## Install
 
-> **Unsigned software.** WSTFU has no code-signing certificate yet, so Microsoft
-> Defender and SmartScreen may warn or flag it - not as a virus, but because a
-> signature is what tells Windows who to trust, and there isn't one. Before it
-> will run and stay put, add two folders to Defender's exclusions:
-> **`C:\ProgramData\WSTFU`** (where it installs and runs from) and **the folder you
-> run `wstfu.ps1` from**. `shutup` tries to add the first one itself; see
-> [Defender](#defender) if that is refused.
+Needs **Windows 10 / 11 Pro, Enterprise, Education or IoT LTSC**. (Home ignores
+the policies this uses.) Nothing to install - it runs on the PowerShell that
+ships with Windows.
 
-Needs **Windows 10 / 11 Pro, Enterprise, Education or IoT LTSC** and an elevated
-PowerShell. (Home ignores the policies this uses.)
+### Easiest way: double-click `Run WSTFU.cmd`
+
+It opens a small control panel. You see the current state, pick a level with one
+click, open an update window, or revert - all with buttons. Approve the admin
+prompt when it asks. That's the whole thing.
+
+> **Unsigned software.** WSTFU has no code-signing certificate yet, so Microsoft
+> Defender and SmartScreen may warn about it or flag it - not as a virus, but
+> because a signature is what tells Windows who to trust, and there isn't one. If
+> it gets blocked, add two folders to Defender's exclusions - **`C:\ProgramData\WSTFU`**
+> (where it installs and runs from) and **the folder you unzipped it into** - then
+> run it again. See [Defender](#defender) for the exact steps.
+
+### Prefer the console?
+
+Same thing, without the window:
 
 ```powershell
 .\wstfu.ps1 status      # read-only, changes nothing - run this first
 .\wstfu.ps1 shutup      # asks which level, applies it, installs the watchdog
 ```
 
-Prefer buttons? Double-click **`Run WSTFU.cmd`** for the control panel.
-`status.cmd`, `shutup.cmd` and `speak.cmd` are there too - they ask for elevation
-themselves.
+`status.cmd`, `shutup.cmd` and `speak.cmd` double-click straight to those actions.
 
 ## Commands
 
