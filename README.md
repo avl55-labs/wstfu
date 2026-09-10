@@ -18,240 +18,113 @@ Your machine reboots when <i>you</i> say so.</p>
 
 ## The problem
 
-Windows is a good OS with one habit that makes it unusable as a workstation: every
-week or two it decides, on its own, that now is a fine moment to restart. Editors
-with unsaved work, long builds, a training run, a remote session - gone, because
-Patch Tuesday landed and the Update Orchestrator got impatient.
-
-Nothing is wrong with the machine. Nothing is wrong with the updates. The problem
-is that **the reboot decision does not belong to the person using the computer**.
-
-WSTFU takes that decision back, and keeps it - because a setting you flip by hand
-gets quietly restored by the next update, and you find out the hard way.
+Every week or two, Windows decides on its own that now is a good time to restart -
+after an update, mid-work, or overnight. Nothing is broken; the reboot decision
+simply does not belong to the person using the machine. WSTFU takes it back and
+**keeps** it, because a setting you flip by hand gets quietly restored by the next
+update.
 
 ## What it does
 
-You pick a noise level. WSTFU applies it, then installs a **SYSTEM watchdog** that
-re-checks everything at boot and every 10 minutes, writing back anything that
-drifted and recreating its own scheduled task if that gets deleted.
+You pick a noise level. WSTFU applies it and installs a background **watchdog**
+that re-checks everything at boot and every 10 minutes, undoing anything that
+drifted and recreating its own task if it gets deleted.
 
-| Level | Name | What it does | You get | You give up |
-|:-----:|------|--------------|---------|-------------|
-| 1 | `mute` | Reboot control only. Updates download and install as usual. | Machine stays fully patched. Smallest possible change to the system. | A pending restart follows you around; installs still land whenever they land. |
-| 2 | `quiet` | `mute` + version pin + 30-day quality deferral + no restart nags. | Monthly patches arrive a month late, on a day you choose. No surprise feature upgrades. | A fix for something actively exploited also waits 30 days. |
-| 3 | `stfu` **(default)** | `quiet` + a rolling pause the watchdog keeps re-stamping. | Total silence. Nothing arrives until you open a window. Fully reversible, and it uses Microsoft's own pause mechanism rather than breaking anything. | The machine stops receiving security fixes until you open a window. Sane for a workstation on a private network. Not for a laptop that lives in cafes. |
+| Level | Name | What it does | You give up |
+|:-----:|------|--------------|-------------|
+| 1 | `mute` | Reboot control only. Updates still download and install. | A pending restart follows you around until you do it. |
+| 2 | `quiet` | `mute` + pin the version + hold monthly updates 30 days + no restart nags. | A fix for something actively exploited also waits 30 days. |
+| 3 | `stfu` **(default)** | `quiet` + a rolling pause, so nothing arrives until you open a window. | No security updates until you open a window - fine for a private workstation, not for a travelling laptop. |
 
-Whatever the level, **reboot control is always on**. That is the point of the tool;
-the rest is about *when* updates are allowed to show up.
-
-[docs/levels.md](docs/levels.md) breaks each level down setting by setting - what
-is written, what Windows does with it, how much confidence it deserves, and what
-no level does on purpose.
+Whatever the level, **reboot control is always on** - the rest is only about *when*
+updates may show up. [What each level changes, setting by setting →](docs/levels.md)
 
 ## Install
 
-> ### ⚠ Unsigned software — you must exclude it in Defender
->
-> WSTFU has **no code-signing certificate** (one costs real money, and this
-> project has no budget for it yet). Without a signature, Windows SmartScreen
-> and Microsoft Defender treat it with suspicion and may warn on launch or flag
-> the script as a *potentially unwanted app* - not because it is malware, but
-> because a signature is what tells Windows who to trust, and there isn't one.
->
-> So before it will run and stay put, add **two folders** to Defender's
-> exclusions:
->
-> - **`C:\ProgramData\WSTFU`** - where WSTFU installs itself and where the
->   watchdog runs from. This one matters most: it is the copy that keeps working.
-> - **the folder you run `wstfu.ps1` from** - your download or repo folder, so
->   Defender does not quarantine the source copy.
->
-> `shutup` tries to add the first one automatically as its first step, but that
-> only works when Defender is running **and** Tamper Protection is off - so do it
-> by hand once to be sure (see [Troubleshooting: Defender](#troubleshooting-microsoft-defender)).
-> This is a one-time step, and `speak` / `untrust` remove the exclusion again.
+> **Unsigned software.** WSTFU has no code-signing certificate yet, so Microsoft
+> Defender and SmartScreen may warn or flag it - not as a virus, but because a
+> signature is what tells Windows who to trust, and there isn't one. Before it
+> will run and stay put, add two folders to Defender's exclusions:
+> **`C:\ProgramData\WSTFU`** (where it installs and runs from) and **the folder you
+> run `wstfu.ps1` from**. `shutup` tries to add the first one itself; see
+> [Defender](#defender) if that is refused.
 
-Requires **Windows 10 or 11, Pro / Enterprise / Education / IoT LTSC**, and an
-elevated PowerShell. (Home ignores these Group Policy keys - see
-[Honest limits](#honest-limits).)
+Needs **Windows 10 / 11 Pro, Enterprise, Education or IoT LTSC** and an elevated
+PowerShell. (Home ignores the policies this uses.)
 
 ```powershell
-# look first - this changes nothing at all
-.\wstfu.ps1 status
-
-# then apply; it asks which level you want, level 3 is preselected
-.\wstfu.ps1 shutup
-
-# or skip the prompt
-.\wstfu.ps1 shutup -Level 3 -Yes
+.\wstfu.ps1 status      # read-only, changes nothing - run this first
+.\wstfu.ps1 shutup      # asks which level, applies it, installs the watchdog
 ```
 
-Prefer double-clicking? `status.cmd`, `shutup.cmd` and `speak.cmd` do the same
-three things and ask for elevation themselves.
+Or double-click `status.cmd` / `shutup.cmd` / `speak.cmd` - they ask for
+elevation themselves.
 
 ## Commands
 
-| Command | What happens |
+| Command | What it does |
 |---------|--------------|
-| `wstfu.ps1 status` | Read-only report: every setting, the orchestrator tasks, the watchdog, and your reboot history. Default command. Changes nothing. |
-| `wstfu.ps1 shutup [-Level 1\|2\|3] [-Yes]` | Applies a level and installs the watchdog. |
-| `wstfu.ps1 window 4h` | Opens a maintenance window: pause and deferrals lifted so you can install on purpose. Reboot control stays on. Closes itself when the time is up. |
-| `wstfu.ps1 close` | Closes that window right now. |
-| `wstfu.ps1 report` | Show the weekly health summary as a toast right now. |
-| `wstfu.ps1 trust` / `untrust` | Add / remove a Defender exclusion for the WSTFU folder (stops file-based flags). Removed by `speak` too. |
-| `wstfu.ps1 dashboard` | Open the control panel: a native window (no dependencies) with live status, one-click level switching, the window, trust and revert, and an EN/RU switch. Self-elevates. |
-| `wstfu.ps1 speak` | Full revert to Microsoft defaults, watchdog removed, Defender exclusion removed. |
-| `wstfu.ps1 enforce` | One silent pass. This is what the watchdog runs. |
+| `wstfu.ps1 status` | Read-only report: settings, watchdog, and your reboot history. Default. Changes nothing. |
+| `wstfu.ps1 shutup [-Level 1\|2\|3]` | Apply a level and install the watchdog. |
+| `wstfu.ps1 window 4h` | Open a maintenance window so you can install updates on purpose. Reboot control stays on; closes itself. |
+| `wstfu.ps1 close` | Close that window now. |
+| `wstfu.ps1 report` | Show the weekly health summary as a toast now. |
+| `wstfu.ps1 trust` / `untrust` | Add / remove the Defender exclusion for the WSTFU folder. |
+| `wstfu.ps1 dashboard` | A small control-panel window (live status, level switch, window, revert, EN/RU). |
+| `wstfu.ps1 speak` | Undo everything - back to Microsoft defaults. |
 
-Durations are `30m`, `4h`, `2d`, or a bare number meaning hours.
+Durations are `30m`, `4h`, `2d`, or a bare number (hours). WSTFU also drops a
+weekly toast with the number that matters: **days since Windows rebooted your PC
+without asking.**
 
-## Updating on purpose
+## Updating on your terms
 
-The whole point is that you still patch the machine - deliberately, at a moment
-that suits you.
-
-```powershell
-.\wstfu.ps1 window 4h        # let updates in for four hours
-# Settings > Windows Update > Check for updates
-# or: UsoClient StartScan ; UsoClient StartInstall
-# install what you want, then reboot yourself
-.\wstfu.ps1 close            # or just let the window expire
-```
-
-During a window, Windows still cannot restart the machine on its own. It never can.
-
-## What gets written
-
-Everything lives in two policy trees and the update UX tree, and it is all
-removed again by `speak`:
-
-```
-HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate
-HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU
-HKLM\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings
-```
-
-Plus these Update Orchestrator tasks, disabled where Windows allows it:
-`Reboot`, `Reboot_AC`, `Reboot_Battery`, `USO_UxBroker_ReadyToReboot`,
-`USO_UxBroker_Display`.
-
-`Schedule Scan` is deliberately left alone - disabling it would break your own
-manual update checks too, which is the opposite of the goal.
-
-`wstfu.ps1 status` prints every single value with its current state, so there is
-nothing hidden. Each setting in the source carries a one-line `Why`.
-
-## Verify it is working
+The point is that you still patch the machine - when it suits you:
 
 ```powershell
-.\wstfu.ps1 status
-
-# the watchdog task
-schtasks /Query /TN WSTFU /V /FO LIST
-
-# who has been rebooting this PC, and why
-Get-WinEvent -FilterHashtable @{ LogName='System'; Id=1074,6008 } -MaxEvents 20 |
-  Select-Object TimeCreated, Id, @{n='Msg';e={ $_.Message -replace "`r`n",' ' }} | Format-Table -Wrap
-
-# the guard log
-Get-Content C:\ProgramData\WSTFU\wstfu.log -Tail 40
+.\wstfu.ps1 window 4h    # updates allowed for 4 hours; reboot control still on
+# Settings > Windows Update > Check for updates, install, then reboot yourself
+.\wstfu.ps1 close        # or just let the window expire
 ```
 
-`status` also prints the number this whole project exists for:
-
-```
-Days since Windows rebooted this PC without asking: 47
-```
+Inside a window Windows still cannot restart the machine on its own. It never can.
 
 ## Honest limits
 
-Read this part. A tool in this space that promises more than it can deliver is
-worse than no tool.
+- **Nothing here is un-killable, and shouldn't be.** A local admin, `SYSTEM` and
+  `TrustedInstaller` sit above every service by design. WSTFU defends against
+  *automatic* reversion (an update, a cleanup tool) by putting settings back
+  within 10 minutes - it does not lock you out of your own machine.
+- **Windows Home is not supported** - it ignores these policies entirely.
+- **Some reboot tasks are protected** and refuse even an elevated admin; `status`
+  shows this honestly. The registry policy carries the load.
+- **Active hours can't cover 24h** (Windows caps them at 18), so the reboot
+  policies do the real work outside 05:00-23:00.
+- **Domain Group Policy wins.** On a domain-joined machine this is out of scope.
+- **Level 3 means an unpatched machine** until you open a window - a deliberate,
+  reversible trade for a workstation off the public network.
 
-- **Nothing here is un-killable, and nothing should be.** A local administrator,
-  `SYSTEM` and `TrustedInstaller` sit above every service in Windows by design.
-  WSTFU defends against *automatic* reversion - an update, a servicing operation,
-  a cleanup tool - by putting settings back within 10 minutes and recreating its
-  own task. It does not lock you out of your own machine.
-- **Windows Home is not supported.** Home ignores these Group Policy keys
-  entirely. WSTFU warns and refuses to pretend otherwise.
-- **Some orchestrator tasks refuse to be disabled.** They are ACL'd to
-  SYSTEM/TrustedInstaller and will deny even an elevated administrator. This is
-  expected on Windows 11; `status` reports it as `denied` instead of hiding it.
-  The registry policy is what carries the load.
-- **The Windows Update Medic Service (`WaaSMedicSvc`) exists to undo exactly this
-  kind of change.** It is itself protected, and WSTFU does not fight it head-on -
-  it simply re-applies faster than the medic can matter. If you see recurring
-  corrections in the log, that is usually what you are looking at.
-- **`AUOptions` and friends are legacy.** Windows 10 1803+ and Windows 11 mostly
-  ignore the old `AU` keys, because updates come through the Update Session
-  Orchestrator now. They are still written (they cost nothing and do apply on
-  LTSC), but they are flagged `legacy` in the source and none of the guarantees
-  rest on them.
-- **Active hours cannot cover 24 hours.** Windows caps the span at 18 hours, so
-  WSTFU uses 05:00-23:00 and lets the reboot policies do the real work.
-- **Domain Group Policy wins.** On a domain-joined machine, policy from the domain
-  can overwrite local values on every refresh. Out of scope.
-- **Defender Tamper Protection is a different mechanism.** It does not affect
-  these settings; do not go looking for a connection.
-- **Level 3 means an unpatched machine.** That is a deliberate, reversible trade
-  for a workstation off the public network. If that is not your situation, use
-  level 1 or 2.
+## Defender
 
-## Troubleshooting: Microsoft Defender
+Defender may flag WSTFU as a *potentially unwanted app* - because disabling
+reboot tasks is behaviour its heuristics distrust, not because it is malware.
+Reputable tools in this space get the same label.
 
-Defender may flag WSTFU. Not as a virus - as a *potentially unwanted app*,
-because disabling update-reboot tasks is behaviour its heuristics distrust.
-Signed, reputable tools in this space get the same label. That is expected.
+- `shutup` tries to exclude its own folder automatically. That works only while
+  Defender is running **and** Tamper Protection is off.
+- If it's refused, add it once by hand: **Windows Security → Virus & threat
+  protection → Manage settings → Exclusions → Add a folder → `C:\ProgramData\WSTFU`**
+  (and the folder you run the script from).
+- If Defender already quarantined the file: **Protection history → Restore**,
+  then add the exclusion, then install.
+- With that folder excluded, the installed copy is left alone - now and after
+  future definition updates. A copy outside the excluded folder is not; behaviour
+  monitoring is mostly, but not 100%, suppressed - the watchdog is the backstop.
 
-`shutup` tries to add its own folder (`C:\ProgramData\WSTFU`) to Defender's
-exclusions as its first step, so scans leave it alone. That works only when:
-
-- Defender let the script start at all (if it already quarantined `wstfu.ps1`,
-  no code ran - restore the file first, see below); and
-- **Tamper Protection is off.** Tamper Protection (on by default on Windows 11)
-  blocks *any* script from changing exclusions - by design. When it is on,
-  `shutup` prints `Defender: could not add exclusion` and you add it by hand,
-  once:
-
-  **Windows Security → Virus & threat protection → Manage settings → Exclusions
-  → Add or remove exclusions → Add a folder → `C:\ProgramData\WSTFU`.**
-
-  Add the folder you run `wstfu.ps1` from too, then run `shutup`.
-
-If Defender already quarantined the file: **Windows Security → Protection history
-→ pick the WSTFU entry → Restore**, then add the exclusion above, then install.
-
-To see exactly what Defender did (elevated PowerShell):
-
-```powershell
-Get-MpThreatDetection | Select-Object InitialDetectionTime, ThreatID, Resources | Format-List
-Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -MaxEvents 40 |
-  Where-Object Id -in 1116,1117,1015,5001 | Select-Object TimeCreated, Id, Message | Format-List
-```
-
-### What the exclusion covers - and what it does not
-
-Be clear-eyed about this:
-
-- **The installed copy in `C:\ProgramData\WSTFU` is protected.** With that
-  folder excluded, Defender does not scan or quarantine it, now or after future
-  definition updates - an excluded path stays excluded. The watchdog runs this
-  copy, so the tool keeps working.
-- **A copy outside the excluded folder is not.** Your repo or download copy can
-  still be quarantined unless you exclude its folder too. Even then, the
-  installed copy keeps running.
-- **Behavioural detection is only mostly suppressed.** A path exclusion stops
-  *file* scanning. Defender can also flag *behaviour* (a process disabling update
-  tasks). For a script run from an excluded path this is largely suppressed too,
-  but Microsoft does not promise 100% - the honest limit. The watchdog is the
-  backstop: it re-applies settings and recreates its own task.
-
-**WSTFU never disables Defender, and never will.** A tool that turns your
-antivirus off is doing exactly what malware does - it would (rightly) get flagged
-harder, it is blocked by Tamper Protection anyway, and it leaves the machine
-exposed if it fails mid-run. Changing an exclusion is the most it touches, and
-`untrust` (and `speak`) put that back.
+**WSTFU never disables Defender, and never will.** Turning your antivirus off is
+what malware does; it's blocked by Tamper Protection anyway, and it would leave
+the machine exposed. An exclusion is the most it touches, and `speak` / `untrust`
+put it back.
 
 ## Uninstall
 
@@ -259,50 +132,20 @@ exposed if it fails mid-run. Changing an exclusion is the most it touches, and
 .\wstfu.ps1 speak
 ```
 
-Removes every value it wrote, re-enables the orchestrator tasks, deletes the
-watchdog task, and runs `gpupdate /force`. The log and config in
-`C:\ProgramData\WSTFU` are left behind on purpose - delete the folder by hand if
-you want no trace at all.
-
-## Files it creates
-
-```
-C:\ProgramData\WSTFU\wstfu.ps1     the copy the watchdog runs
-C:\ProgramData\WSTFU\config.json   chosen level, maintenance window
-C:\ProgramData\WSTFU\state.json    last pass, correction counters
-C:\ProgramData\WSTFU\wstfu.log     rolling log, trimmed at ~1 MB
-Scheduled Task \WSTFU              SYSTEM, at boot + every 10 minutes
-Scheduled Task \WSTFU Report       your session, weekly - the toast summary
-%LOCALAPPDATA%\WSTFU\last-report.txt   text of the last weekly summary
-```
-
-The folder is ACL'd on install: full control for SYSTEM and Administrators,
-read-only for everyone else.
+Removes every value it wrote, re-enables the reboot tasks, deletes the watchdog,
+and removes the Defender exclusion.
 
 ## Development
 
-The policy is data, not code: one table in `Get-WstfuPlan`, and apply, verify,
-report and revert are four passes over it. Adding a setting means adding one row.
-
 ```powershell
-Invoke-Pester ./tests                                                  # unit tests, no system changes
+Invoke-Pester ./tests
 Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
 ```
 
-CI runs both on `windows-latest` plus a parse check on Linux. Before installing on
-a machine you care about, walk through [docs/vm-checklist.md](docs/vm-checklist.md)
-on a throwaway VM.
-
-## Roadmap
-
-Version 1 is about reboots, and only reboots. Candidates for later:
-
-- `status -Json` for monitoring.
-- Signed releases through GitHub Releases.
-- A real Windows service instead of a scheduled task.
-- An opt-in "install and reboot at 03:00 next Sunday" mode for people who want a
-  schedule rather than silence.
+CI runs both on `windows-latest`. The policy is data, not code - one table in
+`Get-WstfuPlan`, and apply / verify / report / revert are four passes over it, so
+adding a setting is adding a row.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
