@@ -57,8 +57,9 @@ PowerShell. (Home ignores the policies this uses.)
 .\wstfu.ps1 shutup      # asks which level, applies it, installs the watchdog
 ```
 
-Or double-click `status.cmd` / `shutup.cmd` / `speak.cmd` - they ask for
-elevation themselves.
+Prefer buttons? Double-click **`Start WSTFU.cmd`** for the control panel.
+`status.cmd`, `shutup.cmd` and `speak.cmd` are there too - they ask for elevation
+themselves.
 
 ## Commands
 
