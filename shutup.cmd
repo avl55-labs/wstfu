@@ -1,5 +1,5 @@
 @echo off
-:: WSTFU - double-click installer. Asks for elevation, then runs the script.
+:: WSTFU - install/apply. Asks for elevation, then runs the script.
 net session >nul 2>&1
 if %errorLevel% neq 0 (
     echo Requesting administrator privileges...

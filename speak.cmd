@@ -1,5 +1,5 @@
 @echo off
-:: WSTFU - full revert to Microsoft defaults.
+:: WSTFU - full revert to Microsoft defaults. Asks for elevation.
 net session >nul 2>&1
 if %errorLevel% neq 0 (
     echo Requesting administrator privileges...
