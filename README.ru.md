@@ -1,8 +1,7 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="WSTFU" width="180">
+  <img src="assets/logo.svg" alt="WSTFU" width="320">
 </p>
 
-<h1 align="center">WSTFU</h1>
 <p align="center"><b>Windows, Shut The F**k Up.</b><br>
 Твой ПК перезагружается тогда, когда <i>ты</i> скажешь.</p>
 
