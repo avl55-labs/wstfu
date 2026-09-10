@@ -1,5 +1,5 @@
-<p align="center">
-  <img src="assets/logo.svg" alt="WSTFU" width="320">
+﻿<p align="center">
+  <img src="assets/logo.webp" alt="WSTFU" width="320">
 </p>
 
 <p align="center"><b>Windows, Shut The F**k Up.</b><br>
@@ -12,7 +12,7 @@ Your machine reboots when <i>you</i> say so.</p>
   <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
-<p align="center"><b>English</b> · <a href="README.ru.md">Русский</a></p>
+<p align="center"><b>English</b> В· <a href="README.ru.md">Р СѓСЃСЃРєРёР№</a></p>
 
 ---
 
@@ -37,7 +37,7 @@ drifted and recreating its own task if it gets deleted.
 | 3 | `stfu` **(default)** | `quiet` + a rolling pause, so nothing arrives until you open a window. | No security updates until you open a window - fine for a private workstation, not for a travelling laptop. |
 
 Whatever the level, **reboot control is always on** - the rest is only about *when*
-updates may show up. [What each level changes, setting by setting →](docs/levels.md)
+updates may show up. [What each level changes, setting by setting в†’](docs/levels.md)
 
 ## Install
 
@@ -112,10 +112,10 @@ Reputable tools in this space get the same label.
 
 - `shutup` tries to exclude its own folder automatically. That works only while
   Defender is running **and** Tamper Protection is off.
-- If it's refused, add it once by hand: **Windows Security → Virus & threat
-  protection → Manage settings → Exclusions → Add a folder → `C:\ProgramData\WSTFU`**
+- If it's refused, add it once by hand: **Windows Security в†’ Virus & threat
+  protection в†’ Manage settings в†’ Exclusions в†’ Add a folder в†’ `C:\ProgramData\WSTFU`**
   (and the folder you run the script from).
-- If Defender already quarantined the file: **Protection history → Restore**,
+- If Defender already quarantined the file: **Protection history в†’ Restore**,
   then add the exclusion, then install.
 - With that folder excluded, the installed copy is left alone - now and after
   future definition updates. A copy outside the excluded folder is not; behaviour
