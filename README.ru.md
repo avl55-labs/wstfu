@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.webp" alt="WSTFU" width="320">
+  <img src="assets/logo.svg" alt="WSTFU" width="320">
 </p>
 
 <p align="center"><b>Windows, Shut The F**k Up.</b><br>
