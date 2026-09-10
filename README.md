@@ -51,6 +51,27 @@ no level does on purpose.
 
 ## Install
 
+> ### ⚠ Unsigned software — you must exclude it in Defender
+>
+> WSTFU has **no code-signing certificate** (one costs real money, and this
+> project has no budget for it yet). Without a signature, Windows SmartScreen
+> and Microsoft Defender treat it with suspicion and may warn on launch or flag
+> the script as a *potentially unwanted app* - not because it is malware, but
+> because a signature is what tells Windows who to trust, and there isn't one.
+>
+> So before it will run and stay put, add **two folders** to Defender's
+> exclusions:
+>
+> - **`C:\ProgramData\WSTFU`** - where WSTFU installs itself and where the
+>   watchdog runs from. This one matters most: it is the copy that keeps working.
+> - **the folder you run `wstfu.ps1` from** - your download or repo folder, so
+>   Defender does not quarantine the source copy.
+>
+> `shutup` tries to add the first one automatically as its first step, but that
+> only works when Defender is running **and** Tamper Protection is off - so do it
+> by hand once to be sure (see [Troubleshooting: Defender](#troubleshooting-microsoft-defender)).
+> This is a one-time step, and `speak` / `untrust` remove the exclusion again.
+
 Requires **Windows 10 or 11, Pro / Enterprise / Education / IoT LTSC**, and an
 elevated PowerShell. (Home ignores these Group Policy keys - see
 [Honest limits](#honest-limits).)
@@ -209,6 +230,23 @@ Get-MpThreatDetection | Select-Object InitialDetectionTime, ThreatID, Resources 
 Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -MaxEvents 40 |
   Where-Object Id -in 1116,1117,1015,5001 | Select-Object TimeCreated, Id, Message | Format-List
 ```
+
+### What the exclusion covers - and what it does not
+
+Be clear-eyed about this:
+
+- **The installed copy in `C:\ProgramData\WSTFU` is protected.** With that
+  folder excluded, Defender does not scan or quarantine it, now or after future
+  definition updates - an excluded path stays excluded. The watchdog runs this
+  copy, so the tool keeps working.
+- **A copy outside the excluded folder is not.** Your repo or download copy can
+  still be quarantined unless you exclude its folder too. Even then, the
+  installed copy keeps running.
+- **Behavioural detection is only mostly suppressed.** A path exclusion stops
+  *file* scanning. Defender can also flag *behaviour* (a process disabling update
+  tasks). For a script run from an excluded path this is largely suppressed too,
+  but Microsoft does not promise 100% - the honest limit. The watchdog is the
+  backstop: it re-applies settings and recreates its own task.
 
 **WSTFU never disables Defender, and never will.** A tool that turns your
 antivirus off is doing exactly what malware does - it would (rightly) get flagged
