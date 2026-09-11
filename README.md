@@ -25,7 +25,7 @@ simply does not belong to the person using the machine. WSTFU takes it back and
 update.
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="WSTFU control panel" width="780">
+  <img src="assets/dashboard.png" alt="WSTFU control panel" width="778">
 </p>
 
 ## What it does
