@@ -11,10 +11,14 @@ jobs:
     name: PSScriptAnalyzer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install PSScriptAnalyzer
         shell: pwsh
-        run: Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) { Register-PSRepository -Default }
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck -AllowClobber -Repository PSGallery
       - name: Analyze
         shell: pwsh
         run: |
@@ -28,10 +32,14 @@ jobs:
     name: Pester
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Pester
         shell: pwsh
-        run: Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) { Register-PSRepository -Default }
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck -AllowClobber -Repository PSGallery
       - name: Run tests
         shell: pwsh
         run: |
@@ -46,7 +54,7 @@ jobs:
     name: Parse check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Parse wstfu.ps1
         shell: pwsh
         run: |
