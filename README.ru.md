@@ -25,7 +25,7 @@
 следующее обновление тихо возвращает назад.
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="Панель управления WSTFU" width="778">
+  <img src="assets/dashboard.ru.png" alt="Панель управления WSTFU" width="778">
 </p>
 
 ## Что делает
