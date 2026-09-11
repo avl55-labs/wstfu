@@ -32,9 +32,9 @@ drifted and recreating its own task if it gets deleted.
 
 | Level | Name | What it does | You give up |
 |:-----:|------|--------------|-------------|
-| 1 | `mute` | Reboot control only. Updates still download and install. | A pending restart follows you around until you do it. |
+| 1 | `mute` **(default)** | Reboot control only. Updates still download and install. | A pending restart follows you around until you do it. |
 | 2 | `quiet` | `mute` + pin the version + hold monthly updates 30 days + no restart nags. | A fix for something actively exploited also waits 30 days. |
-| 3 | `stfu` **(default)** | `quiet` + a rolling pause, so nothing arrives until you open a window. | No security updates until you open a window - fine for a private workstation, not for a travelling laptop. |
+| 3 | `stfu` | `quiet` + a rolling pause, so nothing arrives until you open a window. | No security updates until you open a window - fine for a private workstation, not for a travelling laptop. |
 
 Whatever the level, **reboot control is always on** - the rest is only about *when*
 updates may show up. [What each level changes, setting by setting →](docs/levels.md)

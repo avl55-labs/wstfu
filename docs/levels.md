@@ -28,7 +28,7 @@ The **confidence** column is not decoration:
 
 ---
 
-## Level 1 - `mute`
+## Level 1 - `mute` (default)
 
 **Reboot control only.** Updates download and install exactly as they do today.
 The single thing that changes is that the machine stops restarting itself.
@@ -89,7 +89,7 @@ once a year; upgrading on purpose beats being upgraded.
 
 ---
 
-## Level 3 - `stfu` (default)
+## Level 3 - `stfu`
 
 Everything in `quiet`, plus a rolling pause. Nothing arrives at all until you
 open a maintenance window.

@@ -36,7 +36,7 @@ param(
     [ValidateSet('status', 'shutup', 'window', 'close', 'speak', 'trust', 'untrust', 'report', 'enforce', 'dashboard', 'help')]
     [string]$Command = 'status',
 
-    # 0 means "not supplied" - shutup then asks, or defaults to 3 with -Yes.
+    # 0 means "not supplied" - shutup then asks, or defaults to 1 with -Yes.
     [int]$Level = 0,
 
     [string]$For = '4h',
@@ -52,7 +52,7 @@ $ErrorActionPreference = 'Stop'
 
 #region ------------------------------------------------------------- constants
 
-$script:Version    = '1.0.0-beta'
+$script:Version    = '1.1.0-beta'
 # Resolve ProgramData from the OS, NOT from $env:ProgramData - that variable can
 # come through empty in some spawned/host contexts, and the old temp-dir fallback
 # then pointed the whole tool at a per-user Temp folder, so it reported 'not
@@ -833,7 +833,7 @@ function Invoke-Report {
 
 function Get-Config {
     $default = [pscustomobject]@{
-        level       = 3
+        level       = 1
         version     = $script:Version
         installedAt = $null
         windowUntil = $null
@@ -845,9 +845,9 @@ function Get-Config {
         foreach ($k in 'level', 'version', 'installedAt', 'windowUntil', 'lang') {
             if ($raw.PSObject.Properties.Name -contains $k) { $default.$k = $raw.$k }
         }
-        if ($default.level -lt 1 -or $default.level -gt 3) { $default.level = 3 }
+        if ($default.level -lt 1 -or $default.level -gt 3) { $default.level = 1 }
     } catch {
-        Write-GuardLog 'config.json unreadable, falling back to level 3.' 'WARN'
+        Write-GuardLog 'config.json unreadable, falling back to level 1.' 'WARN'
     }
     return $default
 }
@@ -1173,7 +1173,7 @@ function Show-Banner {
 }
 
 function Show-LevelGuide {
-    Write-Out '  1  mute   - reboot control only' 'White'
+    Write-Out '  1  mute   - reboot control only  [default]' 'White'
     Write-Out '             Updates download and install exactly as they do now, but nothing'
     Write-Out '             restarts the machine except you.'
     Write-Out '             + machine stays fully patched, smallest possible change'
@@ -1185,7 +1185,7 @@ function Show-LevelGuide {
     Write-Out '             + patched within a month, no surprise feature upgrades'
     Write-Out '             - a fix for an actively exploited hole also waits 30 days' 'DarkGray'
     Write-Out ''
-    Write-Out '  3  stfu   - quiet + rolling pause  [default]' 'White'
+    Write-Out '  3  stfu   - quiet + rolling pause' 'White'
     Write-Out '             The watchdog keeps re-stamping the pause mechanism Microsoft ships, so'
     Write-Out '             nothing arrives at all until you run: wstfu window 4h'
     Write-Out '             + total silence, fully reversible, uses a supported mechanism'
@@ -1199,11 +1199,11 @@ function Read-LevelChoice {
     Write-Out 'Pick a noise level:' 'Yellow'
     Write-Out ''
     Show-LevelGuide
-    $answer = Read-Host 'Level [3]'
-    if ([string]::IsNullOrWhiteSpace($answer)) { return 3 }
+    $answer = Read-Host 'Level [1]'
+    if ([string]::IsNullOrWhiteSpace($answer)) { return 1 }
     if ($answer -match '^[123]$') { return [int]$answer }
-    Write-Out 'Not a level. Using 3.' 'DarkYellow'
-    return 3
+    Write-Out 'Not a level. Using 1.' 'DarkYellow'
+    return 1
 }
 
 function Show-Status {
@@ -1429,7 +1429,7 @@ function Invoke-Shutup {
     }
 
     if ($ChosenLevel -lt 1) {
-        $ChosenLevel = if ($NoPrompt) { 3 } else { Read-LevelChoice }
+        $ChosenLevel = if ($NoPrompt) { 1 } else { Read-LevelChoice }
     }
 
     Write-Out ''
@@ -1651,14 +1651,25 @@ function Get-DashString {
     #>
     @{
         en = @{
-            hero='DAYS SINCE WINDOWS REBOOTED YOUR PC WITHOUT ASKING'; lvl='LEVEL'; watchdog='WATCHDOG'
-            window='WINDOW'; drift='SETTINGS DRIFT'; trust='AV TRUST'; pending='PENDING REBOOT'
-            setLevel='Set level:'; bWindow='Open window 4h'; bClose='Close window'; bCheck='Check for updates'
-            bTrust='Trust in Defender'; bUntrust='Remove trust'; bRefresh='Refresh'; bRevert='Revert everything'
+            heroCap='Days since Windows rebooted itself'
+            lvl='LEVEL'; watchdog='WATCHDOG'; window='WINDOW'; drift='DRIFT'; trust='AV TRUST'; pending='PENDING'
+            secLevel='Noise level - pick one'; secActions='Actions'
+            pickHint='No level applied yet. Click a card to choose.'; recommended='recommended'
+            l1desc='Reboot control only. Updates still download and install as usual - you restart when you want.'
+            l2desc='mute + version pin + hold monthly patches 30 days. No restart nags.'
+            l3desc='quiet + a rolling pause: nothing arrives until you open an update window.'
+            aWindowT='Open window 4h'; aWindowD='Allow updates for 4 hours to install them on purpose. Reboots stay yours; the window closes itself.'
+            aCloseT='Close window'; aCloseD='Close the update window now - back to full silence at your level.'
+            aCheckT='Check for updates'; aCheckD='Open Windows Update settings to fetch and install patches by hand.'
+            aTrustT='Trust in Defender'; aTrustD='Add the WSTFU folder to Defender exclusions so the AV leaves the script alone.'
+            aUntrustT='Remove trust'; aUntrustD='Take the WSTFU folder back out of Defender exclusions.'
+            aRefreshT='Refresh'; aRefreshD='Re-read the current status and log. Changes nothing.'
+            aRevertT='Revert everything'; aRevertD='Hand reboot control back to Windows: remove all settings, the watchdog and the Defender exclusion.'
+            logTitle='Log'; logExpand='Expand'; logCollapse='Collapse'; logOpen='Open full log'
             vRunning='running'; vNotSet='not set'; vNotInstalled='not installed'; vClosed='closed'; vOpen='OPEN'
             vNone='none'; vDrift='{0} drifted'; vTrusted='trusted'; vNoDefender='no Defender'
-            vPendingYes='yes - restart yourself'; vClean='clean'; vNA='n/a'
-            ready='Ready.'; refreshed='Refreshed.'; applying='Applying level {0} ...'
+            vPendingYes='yes'; vClean='clean'; vNA='n/a'
+            ready='Ready.'; pick='Pick a level to start.'; refreshed='Refreshed.'; applying='Applying level {0} ...'
             applied='Level {0} applied - {1} setting(s) written, watchdog {2}.'; wdRunning='running'; wdFailed='FAILED'
             winOpen='Maintenance window open for 4h - updates allowed, reboots still yours.'
             winClosed='Window closed - full level back in force.'; updOpened='Opened Windows Update settings.'
@@ -1670,14 +1681,25 @@ function Get-DashString {
             noLog='(no log yet)'; logErr='(log unreadable)'
         }
         ru = @{
-            hero='ДНЕЙ БЕЗ ПЕРЕЗАГРУЗКИ WINDOWS БЕЗ ТВОЕГО ВЕДОМА'; lvl='УРОВЕНЬ'; watchdog='СТОРОЖ'
-            window='ОКНО'; drift='ОТКЛОНЕНИЯ'; trust='ДОВЕРИЕ AV'; pending='ОЖИДАЕТ ПЕРЕЗАГРУЗКИ'
-            setLevel='Уровень:'; bWindow='Открыть окно 4ч'; bClose='Закрыть окно'; bCheck='Проверить обновления'
-            bTrust='Доверить Defender'; bUntrust='Снять доверие'; bRefresh='Обновить'; bRevert='Откатить всё'
+            heroCap='Дней без самовольной перезагрузки Windows'
+            lvl='УРОВЕНЬ'; watchdog='СТОРОЖ'; window='ОКНО'; drift='ОТКЛОНЕНИЯ'; trust='ДОВЕРИЕ AV'; pending='ОЖИДАЕТ'
+            secLevel='Уровень тишины - выбери один'; secActions='Действия'
+            pickHint='Ни один уровень не применён. Нажми карточку, чтобы выбрать.'; recommended='рекоменд.'
+            l1desc='Только контроль перезагрузки. Обновления качаются и ставятся как обычно - перезагружаешь сам.'
+            l2desc='mute + пин версии + задержка ежемесячных патчей на 30 дней. Без напоминаний о рестарте.'
+            l3desc='quiet + скользящая пауза: ничего не прилетает, пока не откроешь окно обновлений.'
+            aWindowT='Открыть окно 4ч'; aWindowD='Разрешить обновления на 4 часа, чтобы поставить их осознанно. Перезагрузка всё равно только твоя; окно закроется само.'
+            aCloseT='Закрыть окно'; aCloseD='Закрыть окно обновлений сейчас - снова полная тишина по выбранному уровню.'
+            aCheckT='Проверить обновления'; aCheckD='Открыть системный Центр обновления Windows, чтобы вручную поставить патчи.'
+            aTrustT='Доверить Defender'; aTrustD='Добавить папку WSTFU в исключения Defender, чтобы антивирус не трогал скрипт.'
+            aUntrustT='Снять доверие'; aUntrustD='Убрать папку WSTFU из исключений Defender.'
+            aRefreshT='Обновить'; aRefreshD='Перечитать текущий статус и лог. Ничего в системе не меняет.'
+            aRevertT='Откатить всё'; aRevertD='Вернуть управление перезагрузкой Windows: снять все настройки, убрать сторожа и исключение Defender.'
+            logTitle='Лог'; logExpand='Развернуть'; logCollapse='Свернуть'; logOpen='Открыть полный лог'
             vRunning='работает'; vNotSet='не задан'; vNotInstalled='не установлен'; vClosed='закрыто'; vOpen='ОТКРЫТО'
             vNone='нет'; vDrift='сбито: {0}'; vTrusted='доверено'; vNoDefender='нет Defender'
-            vPendingYes='да - перезагрузись сам'; vClean='чисто'; vNA='н/д'
-            ready='Готово.'; refreshed='Обновлено.'; applying='Применяю уровень {0} ...'
+            vPendingYes='да'; vClean='чисто'; vNA='н/д'
+            ready='Готово.'; pick='Выбери уровень для старта.'; refreshed='Обновлено.'; applying='Применяю уровень {0} ...'
             applied='Уровень {0} применён - записано настроек: {1}, сторож {2}.'; wdRunning='работает'; wdFailed='ОШИБКА'
             winOpen='Окно обслуживания открыто на 4ч - обновления разрешены, перезагрузка всё равно только твоя.'
             winClosed='Окно закрыто - уровень снова в силе.'; updOpened='Открыл настройки Windows Update.'
@@ -1693,10 +1715,10 @@ function Get-DashString {
 
 function Show-Dashboard {
     if (-not (Test-Admin)) {
-        # The dashboard changes system state, so it needs elevation. Relaunch.
+        # The dashboard changes system state, so it needs elevation. Relaunch hidden.
         try {
-            Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
-                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", 'dashboard')
+            Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$PSCommandPath`"", 'dashboard')
         } catch {
             Write-Out '  The dashboard needs administrator rights and elevation was declined.' 'Red'
         }
@@ -1708,119 +1730,133 @@ function Show-Dashboard {
     [xml]$xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="WSTFU" Height="730" Width="560" WindowStartupLocation="CenterScreen"
+        Title="WSTFU" Width="880" SizeToContent="Height" WindowStartupLocation="CenterScreen"
         Background="#12161C" FontFamily="Segoe UI" ResizeMode="CanMinimize">
   <Window.Resources>
-    <Style TargetType="Button">
+    <Style x:Key="Card" TargetType="Border">
       <Setter Property="Background" Value="#232C38"/>
-      <Setter Property="Foreground" Value="#E8EEF7"/>
-      <Setter Property="BorderThickness" Value="0"/>
-      <Setter Property="Padding" Value="10,7"/>
-      <Setter Property="Margin" Value="0,0,8,0"/>
+      <Setter Property="CornerRadius" Value="11"/>
+      <Setter Property="Padding" Value="14,12"/>
       <Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="FontSize" Value="13"/>
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border Background="{TemplateBinding Background}" CornerRadius="7" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-            </Border>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#2A3542"/></Trigger>
+      </Style.Triggers>
     </Style>
+    <Style x:Key="Chip" TargetType="Border">
+      <Setter Property="Background" Value="#1B222B"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Padding" Value="11,9"/>
+    </Style>
+    <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#E8EEF7"/></Style>
   </Window.Resources>
-  <Grid Margin="18">
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/>
-    </Grid.RowDefinitions>
 
-    <Grid Grid.Row="0" Margin="0,0,0,14">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <StackPanel Grid.Column="0" Orientation="Horizontal">
-        <TextBlock Text="WSTFU" FontSize="26" FontWeight="Bold" Foreground="#E8EEF7"/>
-        <TextBlock Text="  Windows, Shut The F**k Up" FontSize="13" Foreground="#8A97A6" VerticalAlignment="Bottom" Margin="0,0,0,4"/>
+  <StackPanel Margin="20">
+
+    <Grid Margin="0,0,0,4">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+      <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock Text="WSTFU" FontSize="30" FontWeight="Bold" Foreground="#E8EEF7"/>
+        <TextBlock Name="lblVer" FontSize="11" Foreground="#8A97A6" Margin="8,0,0,3" VerticalAlignment="Bottom"/>
       </StackPanel>
-      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock Name="lnEN" Text="EN" FontSize="13" Foreground="#8A97A6" Cursor="Hand" Margin="0,0,6,0"/>
-        <TextBlock Text="|" FontSize="13" Foreground="#3A4452" Margin="0,0,6,0"/>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <TextBlock Name="lnEN" Text="EN" FontSize="13" Foreground="#8A97A6" Cursor="Hand"/>
+        <TextBlock Text="  |  " FontSize="13" Foreground="#3A4452"/>
         <TextBlock Name="lnRU" Text="RU" FontSize="13" Foreground="#8A97A6" Cursor="Hand"/>
       </StackPanel>
+      <Border Grid.Column="2" Background="#1B222B" CornerRadius="10" BorderBrush="#FBBF24" BorderThickness="3,0,0,0" Padding="14,8">
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Name="txHero" MaxWidth="160" TextWrapping="Wrap" FontSize="10" Foreground="#FBBF24" TextAlignment="Right" VerticalAlignment="Center"/>
+          <TextBlock Name="lblDays" Text="--" FontSize="38" FontWeight="Bold" Foreground="#22D3EE" Margin="12,0,0,0" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Border>
     </Grid>
+    <TextBlock Name="lblSystem" FontSize="11" Foreground="#8A97A6" TextAlignment="Right" Margin="0,2,2,16"/>
 
-    <Border Grid.Row="1" Background="#1B222B" CornerRadius="12" Padding="18,16" Margin="0,0,0,12">
-      <StackPanel>
-        <TextBlock Name="txHero" FontSize="11" Foreground="#8A97A6"/>
-        <TextBlock Name="lblDays" Text="--" FontSize="46" FontWeight="Bold" Foreground="#22D3EE" Margin="0,2,0,0"/>
-        <TextBlock Name="lblSystem" Text="" FontSize="12" Foreground="#8A97A6"/>
+    <UniformGrid Columns="6" Margin="0,0,0,18">
+      <Border Style="{StaticResource Chip}" Margin="0,0,6,0"><StackPanel><TextBlock Name="txLevel" FontSize="9" Foreground="#8A97A6"/><TextBlock Name="lblLevel" Text="--" FontSize="14" Foreground="#E8EEF7" Margin="0,3,0,0"/></StackPanel></Border>
+      <Border Style="{StaticResource Chip}" Margin="0,0,6,0"><StackPanel><TextBlock Name="txWatchdog" FontSize="9" Foreground="#8A97A6"/><TextBlock Name="lblWatchdog" Text="--" FontSize="14" Foreground="#E8EEF7" Margin="0,3,0,0"/></StackPanel></Border>
+      <Border Style="{StaticResource Chip}" Margin="0,0,6,0"><StackPanel><TextBlock Name="txWindow" FontSize="9" Foreground="#8A97A6"/><TextBlock Name="lblWindow" Text="--" FontSize="14" Foreground="#E8EEF7" Margin="0,3,0,0"/></StackPanel></Border>
+      <Border Style="{StaticResource Chip}" Margin="0,0,6,0"><StackPanel><TextBlock Name="txDrift" FontSize="9" Foreground="#8A97A6"/><TextBlock Name="lblDrift" Text="--" FontSize="14" Foreground="#E8EEF7" Margin="0,3,0,0"/></StackPanel></Border>
+      <Border Style="{StaticResource Chip}" Margin="0,0,6,0"><StackPanel><TextBlock Name="txTrust" FontSize="9" Foreground="#8A97A6"/><TextBlock Name="lblTrust" Text="--" FontSize="14" Foreground="#E8EEF7" Margin="0,3,0,0"/></StackPanel></Border>
+      <Border Style="{StaticResource Chip}"><StackPanel><TextBlock Name="txPending" FontSize="9" Foreground="#8A97A6"/><TextBlock Name="lblPending" Text="--" FontSize="14" Foreground="#E8EEF7" Margin="0,3,0,0"/></StackPanel></Border>
+    </UniformGrid>
+
+    <TextBlock Name="txSecLevel" FontSize="11" Foreground="#8A97A6" Margin="2,0,0,10"/>
+    <TextBlock Name="txPickHint" FontSize="12" Foreground="#FBBF24" Margin="2,0,0,8" Visibility="Collapsed"/>
+    <UniformGrid Columns="3" Margin="0,0,0,4">
+      <Border Name="cardL1" Style="{StaticResource Card}" Margin="0,0,6,0" MinHeight="120" BorderThickness="0">
+        <Grid>
+          <StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Name="numL1" Text="1" FontSize="24" FontWeight="Bold" Foreground="#8A97A6"/>
+              <TextBlock Name="nameL1" FontSize="18" FontWeight="Bold" Foreground="#E8EEF7" Margin="9,0,0,0" VerticalAlignment="Bottom"/>
+            </StackPanel>
+            <TextBlock Name="descL1" TextWrapping="Wrap" FontSize="12" Foreground="#8A97A6" Margin="0,8,0,0"/>
+          </StackPanel>
+          <Border HorizontalAlignment="Right" VerticalAlignment="Top" Background="#14311F" CornerRadius="20" Padding="8,3">
+            <TextBlock Name="tagL1" FontSize="9" FontWeight="Bold" Foreground="#34D399"/>
+          </Border>
+        </Grid>
+      </Border>
+      <Border Name="cardL2" Style="{StaticResource Card}" Margin="0,0,6,0" MinHeight="120" BorderThickness="0">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Name="numL2" Text="2" FontSize="24" FontWeight="Bold" Foreground="#8A97A6"/>
+            <TextBlock Name="nameL2" FontSize="18" FontWeight="Bold" Foreground="#E8EEF7" Margin="9,0,0,0" VerticalAlignment="Bottom"/>
+          </StackPanel>
+          <TextBlock Name="descL2" TextWrapping="Wrap" FontSize="12" Foreground="#8A97A6" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Border>
+      <Border Name="cardL3" Style="{StaticResource Card}" MinHeight="120" BorderThickness="0">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Name="numL3" Text="3" FontSize="24" FontWeight="Bold" Foreground="#8A97A6"/>
+            <TextBlock Name="nameL3" FontSize="18" FontWeight="Bold" Foreground="#E8EEF7" Margin="9,0,0,0" VerticalAlignment="Bottom"/>
+          </StackPanel>
+          <TextBlock Name="descL3" TextWrapping="Wrap" FontSize="12" Foreground="#8A97A6" Margin="0,8,0,0"/>
+        </StackPanel>
+      </Border>
+    </UniformGrid>
+
+    <TextBlock Name="txSecActions" FontSize="11" Foreground="#8A97A6" Margin="2,14,0,10"/>
+    <UniformGrid Columns="3" Rows="2">
+      <Border Name="actWindow" Style="{StaticResource Card}" Margin="0,0,6,6" MinHeight="86" BorderBrush="#FBBF24" BorderThickness="3,0,0,0">
+        <StackPanel><TextBlock Name="actWindowT" FontSize="14" FontWeight="SemiBold" Foreground="#E8EEF7"/><TextBlock Name="actWindowD" TextWrapping="Wrap" FontSize="11" Foreground="#8A97A6" Margin="0,5,0,0"/></StackPanel>
+      </Border>
+      <Border Name="actClose" Style="{StaticResource Card}" Margin="0,0,6,6" MinHeight="86" BorderBrush="#FBBF24" BorderThickness="3,0,0,0">
+        <StackPanel><TextBlock Name="actCloseT" FontSize="14" FontWeight="SemiBold" Foreground="#E8EEF7"/><TextBlock Name="actCloseD" TextWrapping="Wrap" FontSize="11" Foreground="#8A97A6" Margin="0,5,0,0"/></StackPanel>
+      </Border>
+      <Border Name="actCheck" Style="{StaticResource Card}" Margin="0,0,0,6" MinHeight="86" BorderBrush="#22D3EE" BorderThickness="3,0,0,0">
+        <StackPanel><TextBlock Name="actCheckT" FontSize="14" FontWeight="SemiBold" Foreground="#E8EEF7"/><TextBlock Name="actCheckD" TextWrapping="Wrap" FontSize="11" Foreground="#8A97A6" Margin="0,5,0,0"/></StackPanel>
+      </Border>
+      <Border Name="actTrust" Style="{StaticResource Card}" Margin="0,0,6,0" MinHeight="86" BorderBrush="#34D399" BorderThickness="3,0,0,0">
+        <StackPanel><TextBlock Name="actTrustT" FontSize="14" FontWeight="SemiBold" Foreground="#E8EEF7"/><TextBlock Name="actTrustD" TextWrapping="Wrap" FontSize="11" Foreground="#8A97A6" Margin="0,5,0,0"/></StackPanel>
+      </Border>
+      <Border Name="actRefresh" Style="{StaticResource Card}" Margin="0,0,6,0" MinHeight="86" BorderBrush="#4B5A6B" BorderThickness="3,0,0,0">
+        <StackPanel><TextBlock Name="actRefreshT" FontSize="14" FontWeight="SemiBold" Foreground="#E8EEF7"/><TextBlock Name="actRefreshD" TextWrapping="Wrap" FontSize="11" Foreground="#8A97A6" Margin="0,5,0,0"/></StackPanel>
+      </Border>
+      <Border Name="actRevert" Style="{StaticResource Card}" MinHeight="86" BorderBrush="#F87171" BorderThickness="3,0,0,0">
+        <StackPanel><TextBlock Name="actRevertT" FontSize="14" FontWeight="SemiBold" Foreground="#F87171"/><TextBlock Name="actRevertD" TextWrapping="Wrap" FontSize="11" Foreground="#8A97A6" Margin="0,5,0,0"/></StackPanel>
+      </Border>
+    </UniformGrid>
+
+    <Grid Margin="0,16,0,6">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock Name="txLogTitle" Grid.Column="0" FontSize="11" Foreground="#8A97A6" VerticalAlignment="Center"/>
+      <StackPanel Grid.Column="1" Orientation="Horizontal">
+        <TextBlock Name="lnExpand" Foreground="#22D3EE" Cursor="Hand" FontSize="12" Margin="0,0,16,0"/>
+        <TextBlock Name="lnOpenLog" Foreground="#22D3EE" Cursor="Hand" FontSize="12"/>
       </StackPanel>
-    </Border>
+    </Grid>
+    <TextBox Name="logBox" IsReadOnly="True" Background="#0D1117" Foreground="#8A97A6"
+             BorderBrush="#171E27" BorderThickness="1" FontFamily="Consolas" FontSize="11"
+             Height="92" Padding="8" TextWrapping="NoWrap"
+             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
 
-    <Border Grid.Row="2" Background="#1B222B" CornerRadius="12" Padding="18,14" Margin="0,0,0,12">
-      <Grid>
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,4">
-          <TextBlock Name="txLevel" FontSize="10" Foreground="#8A97A6"/>
-          <TextBlock Name="lblLevel" Text="--" FontSize="15" Foreground="#E8EEF7"/>
-        </StackPanel>
-        <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,4">
-          <TextBlock Name="txWatchdog" FontSize="10" Foreground="#8A97A6"/>
-          <TextBlock Name="lblWatchdog" Text="--" FontSize="15" Foreground="#E8EEF7"/>
-        </StackPanel>
-        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,4">
-          <TextBlock Name="txWindow" FontSize="10" Foreground="#8A97A6"/>
-          <TextBlock Name="lblWindow" Text="--" FontSize="15" Foreground="#E8EEF7"/>
-        </StackPanel>
-        <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,4">
-          <TextBlock Name="txDrift" FontSize="10" Foreground="#8A97A6"/>
-          <TextBlock Name="lblDrift" Text="--" FontSize="15" Foreground="#E8EEF7"/>
-        </StackPanel>
-        <StackPanel Grid.Row="2" Grid.Column="0" Margin="0,4">
-          <TextBlock Name="txTrust" FontSize="10" Foreground="#8A97A6"/>
-          <TextBlock Name="lblTrust" Text="--" FontSize="15" Foreground="#E8EEF7"/>
-        </StackPanel>
-        <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,4">
-          <TextBlock Name="txPending" FontSize="10" Foreground="#8A97A6"/>
-          <TextBlock Name="lblPending" Text="--" FontSize="15" Foreground="#E8EEF7"/>
-        </StackPanel>
-      </Grid>
-    </Border>
-
-    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,0,0,10">
-      <TextBlock Name="txSetLevel" Foreground="#8A97A6" VerticalAlignment="Center" Margin="0,0,10,0" FontSize="13"/>
-      <Button Name="btnL1" Content="1  mute"/>
-      <Button Name="btnL2" Content="2  quiet"/>
-      <Button Name="btnL3" Content="3  stfu"/>
-    </StackPanel>
-
-    <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,0,0,10">
-      <Button Name="btnWindow"/>
-      <Button Name="btnClose"/>
-      <Button Name="btnCheck"/>
-    </StackPanel>
-
-    <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,12">
-      <Button Name="btnTrust"/>
-      <Button Name="btnRefresh"/>
-      <Button Name="btnRevert" Background="#3A1E22" Foreground="#F87171"/>
-    </StackPanel>
-
-    <Border Grid.Row="6" Background="#0D1117" CornerRadius="8" Padding="10">
-      <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <TextBlock Name="lblLog" Text="" FontFamily="Consolas" FontSize="11" Foreground="#8A97A6" TextWrapping="NoWrap"/>
-      </ScrollViewer>
-    </Border>
-
-    <TextBlock Grid.Row="7" Name="lblStatus" Text="" FontSize="12" Foreground="#34D399" Margin="2,8,0,0"/>
-  </Grid>
+    <TextBlock Name="lblStatus" FontSize="12" Foreground="#34D399" Margin="2,10,0,0"/>
+  </StackPanel>
 </Window>
 '@
 
@@ -1828,16 +1864,22 @@ function Show-Dashboard {
     $win = [Windows.Markup.XamlReader]::Load($reader)
 
     $ctl = @{}
-    foreach ($n in 'lnEN','lnRU','txHero','txLevel','txWatchdog','txWindow','txDrift','txTrust','txPending',
-                   'txSetLevel','lblDays','lblSystem','lblLevel','lblWatchdog','lblWindow','lblDrift','lblTrust',
-                   'lblPending','lblLog','lblStatus','btnL1','btnL2','btnL3','btnWindow','btnClose','btnCheck',
-                   'btnTrust','btnRefresh','btnRevert') {
+    foreach ($n in 'lblVer','lnEN','lnRU','txHero','lblDays','lblSystem',
+                   'txLevel','lblLevel','txWatchdog','lblWatchdog','txWindow','lblWindow',
+                   'txDrift','lblDrift','txTrust','lblTrust','txPending','lblPending',
+                   'txSecLevel','txPickHint','cardL1','cardL2','cardL3','numL1','numL2','numL3',
+                   'nameL1','nameL2','nameL3','descL1','descL2','descL3','tagL1',
+                   'txSecActions','actWindow','actWindowT','actWindowD','actClose','actCloseT','actCloseD',
+                   'actCheck','actCheckT','actCheckD','actTrust','actTrustT','actTrustD',
+                   'actRefresh','actRefreshT','actRefreshD','actRevert','actRevertT','actRevertD',
+                   'txLogTitle','lnExpand','lnOpenLog','logBox','lblStatus') {
         $ctl[$n] = $win.FindName($n)
     }
 
     $strings = Get-DashString
     $script:DashLang = (Get-Config).lang
     if ($script:DashLang -ne 'ru' -and $script:DashLang -ne 'en') { $script:DashLang = 'en' }
+    $script:LogTall = $false
 
     $green='#34D399'; $amber='#FBBF24'; $red='#F87171'; $cyan='#22D3EE'; $text='#E8EEF7'; $muted='#8A97A6'
     $brush = { param($hex) New-Object Windows.Media.SolidColorBrush ([Windows.Media.ColorConverter]::ConvertFromString($hex)) }
@@ -1846,6 +1888,7 @@ function Show-Dashboard {
     $refresh = {
         $S = $strings[$script:DashLang]
         $m = Get-DashboardModel
+
         if ($null -ne $m.Days) { $ctl.lblDays.Text = [string]$m.Days; & $setFg $ctl.lblDays $cyan }
         elseif ($m.HasHistory) { $ctl.lblDays.Text = $S.vClean; & $setFg $ctl.lblDays $green }
         else { $ctl.lblDays.Text = $S.vNA; & $setFg $ctl.lblDays $muted }
@@ -1867,28 +1910,54 @@ function Show-Dashboard {
         if (-not $m.DefenderOk) { $ctl.lblTrust.Text = $S.vNoDefender; & $setFg $ctl.lblTrust $muted }
         elseif ($m.Trusted) { $ctl.lblTrust.Text = $S.vTrusted; & $setFg $ctl.lblTrust $green }
         else { $ctl.lblTrust.Text = $S.vNotSet; & $setFg $ctl.lblTrust $muted }
-        $ctl.btnTrust.Content = $(if ($m.Trusted) { $S.bUntrust } else { $S.bTrust })
 
         if ($m.Pending) { $ctl.lblPending.Text = $S.vPendingYes; & $setFg $ctl.lblPending $amber }
         else { $ctl.lblPending.Text = $S.vNone; & $setFg $ctl.lblPending $text }
 
-        $ctl.btnL1.Background = (& $brush $(if ($m.Installed -and $m.Level -eq 1) { '#1E3A5F' } else { '#232C38' }))
-        $ctl.btnL2.Background = (& $brush $(if ($m.Installed -and $m.Level -eq 2) { '#1E3A5F' } else { '#232C38' }))
-        $ctl.btnL3.Background = (& $brush $(if ($m.Installed -and $m.Level -eq 3) { '#1E3A5F' } else { '#232C38' }))
+        # level cards: highlight the active one only when installed
+        $cards = @{ 1 = $ctl.cardL1; 2 = $ctl.cardL2; 3 = $ctl.cardL3 }
+        $nums  = @{ 1 = $ctl.numL1;  2 = $ctl.numL2;  3 = $ctl.numL3 }
+        foreach ($i in 1, 2, 3) {
+            $isActive = ($m.Installed -and $m.Level -eq $i)
+            if ($isActive) {
+                $cards[$i].BorderBrush = (& $brush $cyan); $cards[$i].BorderThickness = '2'
+                & $setFg $nums[$i] $cyan
+            } else {
+                $cards[$i].BorderThickness = '0'; & $setFg $nums[$i] $muted
+            }
+        }
+        $ctl.txPickHint.Visibility = if ($m.Installed) { 'Collapsed' } else { 'Visible' }
+
+        # trust action reflects current state
+        if ($m.Trusted) { $ctl.actTrustT.Text = $S.aUntrustT; $ctl.actTrustD.Text = $S.aUntrustD }
+        else { $ctl.actTrustT.Text = $S.aTrustT; $ctl.actTrustD.Text = $S.aTrustD }
 
         try {
-            if (Test-Path $script:LogPath) { $ctl.lblLog.Text = ((Get-Content $script:LogPath -Tail 10) -join "`n") }
-            else { $ctl.lblLog.Text = $S.noLog }
-        } catch { $ctl.lblLog.Text = $S.logErr }
+            if (Test-Path $script:LogPath) {
+                $ctl.logBox.Text = ((Get-Content $script:LogPath -Tail 200) -join "`r`n")
+                $ctl.logBox.ScrollToEnd()
+            } else { $ctl.logBox.Text = $S.noLog }
+        } catch { $ctl.logBox.Text = $S.logErr }
     }
 
     $applyLang = {
         $S = $strings[$script:DashLang]
-        $ctl.txHero.Text = $S.hero; $ctl.txLevel.Text = $S.lvl; $ctl.txWatchdog.Text = $S.watchdog
-        $ctl.txWindow.Text = $S.window; $ctl.txDrift.Text = $S.drift; $ctl.txTrust.Text = $S.trust
-        $ctl.txPending.Text = $S.pending; $ctl.txSetLevel.Text = $S.setLevel
-        $ctl.btnWindow.Content = $S.bWindow; $ctl.btnClose.Content = $S.bClose; $ctl.btnCheck.Content = $S.bCheck
-        $ctl.btnRefresh.Content = $S.bRefresh; $ctl.btnRevert.Content = $S.bRevert
+        $ctl.lblVer.Text = "v$($script:Version)"
+        $ctl.txHero.Text = $S.heroCap
+        $ctl.txLevel.Text = $S.lvl; $ctl.txWatchdog.Text = $S.watchdog; $ctl.txWindow.Text = $S.window
+        $ctl.txDrift.Text = $S.drift; $ctl.txTrust.Text = $S.trust; $ctl.txPending.Text = $S.pending
+        $ctl.txSecLevel.Text = $S.secLevel; $ctl.txSecActions.Text = $S.secActions
+        $ctl.txPickHint.Text = $S.pickHint; $ctl.tagL1.Text = $S.recommended
+        $ctl.nameL1.Text = $script:LevelNames[1]; $ctl.nameL2.Text = $script:LevelNames[2]; $ctl.nameL3.Text = $script:LevelNames[3]
+        $ctl.descL1.Text = $S.l1desc; $ctl.descL2.Text = $S.l2desc; $ctl.descL3.Text = $S.l3desc
+        $ctl.actWindowT.Text = $S.aWindowT; $ctl.actWindowD.Text = $S.aWindowD
+        $ctl.actCloseT.Text = $S.aCloseT; $ctl.actCloseD.Text = $S.aCloseD
+        $ctl.actCheckT.Text = $S.aCheckT; $ctl.actCheckD.Text = $S.aCheckD
+        $ctl.actRefreshT.Text = $S.aRefreshT; $ctl.actRefreshD.Text = $S.aRefreshD
+        $ctl.actRevertT.Text = $S.aRevertT; $ctl.actRevertD.Text = $S.aRevertD
+        $ctl.txLogTitle.Text = $S.logTitle
+        $ctl.lnExpand.Text = if ($script:LogTall) { $S.logCollapse } else { $S.logExpand }
+        $ctl.lnOpenLog.Text = $S.logOpen
         & $setFg $ctl.lnEN $(if ($script:DashLang -eq 'en') { $text } else { $muted })
         & $setFg $ctl.lnRU $(if ($script:DashLang -eq 'ru') { $text } else { $muted })
         & $refresh
@@ -1917,30 +1986,30 @@ function Show-Dashboard {
             & $say ($S.applied -f $lvl, $r.Enforce.Fixed.Count, $wd) $green
         } catch { & $say ($S.err -f $_.Exception.Message) $red }
     }
-    $ctl.btnL1.Add_Click({ & $apply 1 })
-    $ctl.btnL2.Add_Click({ & $apply 2 })
-    $ctl.btnL3.Add_Click({ & $apply 3 })
+    $ctl.cardL1.Add_MouseLeftButtonUp({ & $apply 1 })
+    $ctl.cardL2.Add_MouseLeftButtonUp({ & $apply 2 })
+    $ctl.cardL3.Add_MouseLeftButtonUp({ & $apply 3 })
 
-    $ctl.btnWindow.Add_Click({
+    $ctl.actWindow.Add_MouseLeftButtonUp({
         $S = $strings[$script:DashLang]
         try {
             $c = Get-Config; $c.windowUntil = ((Get-Date).AddHours(4)).ToString('s'); Save-Config $c
             $null = Invoke-Enforce; & $refresh; & $say $S.winOpen $amber
         } catch { & $say ($S.err -f $_.Exception.Message) $red }
     })
-    $ctl.btnClose.Add_Click({
+    $ctl.actClose.Add_MouseLeftButtonUp({
         $S = $strings[$script:DashLang]
         try {
             $c = Get-Config; $c.windowUntil = $null; Save-Config $c
             $null = Invoke-Enforce; & $refresh; & $say $S.winClosed $green
         } catch { & $say ($S.err -f $_.Exception.Message) $red }
     })
-    $ctl.btnCheck.Add_Click({
+    $ctl.actCheck.Add_MouseLeftButtonUp({
         $S = $strings[$script:DashLang]
         try { Start-Process 'ms-settings:windowsupdate'; & $say $S.updOpened $green }
         catch { & $say ($S.err -f $_.Exception.Message) $red }
     })
-    $ctl.btnTrust.Add_Click({
+    $ctl.actTrust.Add_MouseLeftButtonUp({
         $S = $strings[$script:DashLang]
         try {
             if (Test-DefenderTrust) { $null = Disable-DefenderTrust; & $say $S.trustRemoved $green }
@@ -1955,14 +2024,29 @@ function Show-Dashboard {
             & $refresh
         } catch { & $say ($S.err -f $_.Exception.Message) $red }
     })
-    $ctl.btnRefresh.Add_Click({ $S = $strings[$script:DashLang]; & $refresh; & $say $S.refreshed $muted })
-    $ctl.btnRevert.Add_Click({
+    $ctl.actRefresh.Add_MouseLeftButtonUp({ $S = $strings[$script:DashLang]; & $refresh; & $say $S.refreshed $muted })
+    $ctl.actRevert.Add_MouseLeftButtonUp({
         $S = $strings[$script:DashLang]
         $ans = [Windows.MessageBox]::Show($S.confirm, $S.confirmTitle, 'YesNo', 'Warning')
         if ($ans -eq 'Yes') {
             try { $n = Reset-Wstfu; & $refresh; & $say ($S.reverted -f $n) $amber }
             catch { & $say ($S.err -f $_.Exception.Message) $red }
         }
+    })
+
+    $ctl.lnExpand.Add_MouseLeftButtonUp({
+        $S = $strings[$script:DashLang]
+        $script:LogTall = -not $script:LogTall
+        $ctl.logBox.Height = if ($script:LogTall) { 260 } else { 92 }
+        $ctl.lnExpand.Text = if ($script:LogTall) { $S.logCollapse } else { $S.logExpand }
+        $ctl.logBox.ScrollToEnd()
+    })
+    $ctl.lnOpenLog.Add_MouseLeftButtonUp({
+        $S = $strings[$script:DashLang]
+        try {
+            if (Test-Path $script:LogPath) { Start-Process notepad.exe $script:LogPath }
+            else { & $say $S.noLog $muted }
+        } catch { & $say ($S.err -f $_.Exception.Message) $red }
     })
 
     & $applyLang

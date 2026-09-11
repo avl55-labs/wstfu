@@ -2,12 +2,25 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0-beta] - 2026-09-11
+
+### Changed
+- Default noise level is now `mute` (level 1) instead of `stfu`. Reboot control
+  is on, updates are left untouched - pick a stricter level explicitly if you
+  want deferral or the rolling pause.
+- Redesigned the control panel: wider window, and every level and action is now
+  a large labelled card that says what it does.
+
+### Fixed
+- `Run WSTFU.cmd` no longer leaves a black console window sitting behind the
+  dashboard - the control panel opens on its own.
+
 ## [1.0.0-beta] - 2026-09-09
 
 First public beta. Reboot control for Windows Update.
 
 ### Added
-- Three noise levels chosen at install: `mute`, `quiet`, `stfu` (default).
+- Three noise levels chosen at install: `mute` (default), `quiet`, `stfu`.
 - `status` - a safe, read-only report and the default command.
 - A SYSTEM watchdog that re-applies the policy at boot and every 10 minutes and
   recreates its own task if deleted.
