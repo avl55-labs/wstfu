@@ -24,6 +24,10 @@ simply does not belong to the person using the machine. WSTFU takes it back and
 **keeps** it, because a setting you flip by hand gets quietly restored by the next
 update.
 
+<p align="center">
+  <img src="assets/dashboard.png" alt="WSTFU control panel" width="780">
+</p>
+
 ## What it does
 
 You pick a noise level. WSTFU applies it and installs a background **watchdog**
